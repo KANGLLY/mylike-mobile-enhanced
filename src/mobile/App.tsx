@@ -6,6 +6,7 @@ import { ActivityIndicator, BackHandler, Pressable, StatusBar, StyleSheet, Text,
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MobileProvider, useMobile } from './context';
+import { DouyinSessionProvider } from './douyin-session';
 import { FeedScreen } from './FeedScreen';
 import { LibraryScreen, type OpenQueue } from './LibraryScreen';
 import { type Scope, type Session, type Source } from './model';
@@ -22,9 +23,9 @@ const Stack = createNativeStackNavigator<Routes>();
 const navigationTheme = { ...DarkTheme, colors: { ...DarkTheme.colors, background: colors.background, card: colors.background } };
 const swipeOptions = { fullScreenGestureEnabled: true, gestureEnabled: true, fullScreenGestureShadowEnabled: false, animationMatchesGesture: true };
 export default function MobileApp() {
-  return <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}><SafeAreaProvider style={{ flex: 1, backgroundColor: colors.background }}><MobileProvider>
+  return <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}><SafeAreaProvider style={{ flex: 1, backgroundColor: colors.background }}><DouyinSessionProvider><MobileProvider>
     <RootNavigator />
-  </MobileProvider></SafeAreaProvider></GestureHandlerRootView>;
+  </MobileProvider></DouyinSessionProvider></SafeAreaProvider></GestureHandlerRootView>;
 }
 function RootNavigator() {
   const { epoch } = useMobile();

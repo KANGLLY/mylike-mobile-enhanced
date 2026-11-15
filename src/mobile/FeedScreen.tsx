@@ -201,7 +201,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
       <View style={[styles.toolbar, toolbarLayout]}>
         <Pressable accessibilityLabel="打开作者页" onPress={() => openSide('author')} style={styles.avatar}>{current.data?.authorAvatar && !avatarFailed ? <Image source={{ uri: current.data.authorAvatar, headers: mediaHeaders }} style={{ width: 42, height: 42, borderRadius: 21 }} onError={() => setAvatarFailed(true)} /> : <Text style={ui.text}>{author.slice(0, 1)}</Text>}</Pressable>
         <View style={styles.tool}><IconButton name="heart" label="切换本机喜欢" size={34} color={liked ? '#fc2f56' : '#fff'} onPress={() => { if (current.work) setMark(id, 'liked', !liked); }} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.likes, '喜欢')}</Text></View>
-        <View style={styles.tool}><IconButton name="chatbubble-ellipses" label="打开游客评论预览" size={33} onPress={openComments} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.comments, '评论')}</Text></View>
+        <View style={styles.tool}><IconButton name="chatbubble-ellipses" label="查看评论" size={33} onPress={openComments} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.comments, '评论')}</Text></View>
         <View style={styles.tool}><IconButton name="star" label="切换本机收藏，长按管理收藏夹" size={34} color={saved ? '#ffc345' : '#fff'} onPress={() => { if (current.work) setMark(id, 'saved', !saved); }} onLongPress={() => { if (current.work) setGroupId(id); }} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.favorites, '收藏')}</Text></View>
         <View style={styles.tool}><IconButton name="arrow-redo" label="分享公开作品链接" size={33} onPress={() => setPanel('share')} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.shares, '分享')}</Text></View>
       </View>
@@ -255,7 +255,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
             <Button title={preferences.clear ? '退出清屏' : '清屏'} selected={preferences.clear} onPress={() => setPreferences({ clear: !preferences.clear })} />
             <Button title="播放队列" onPress={() => setPanel('queue')} /><Button title="重新打乱" onPress={() => { setPanel(null); reshuffle(); }} /><Button title="重新取链" onPress={() => { setPanel(null); retry(); }} />
           </View><Text style={ui.muted}>播放速度</Text><View style={styles.options}>{rates.map(rate => <Button key={rate} title={`${rate}×`} selected={preferences.rate === rate} onPress={() => { setBoostLocked(false); setPreferences({ rate }); }} />)}</View>
-            <Text style={ui.muted}>喜欢和收藏仅修改本机。评论目前只提供游客有限预览。</Text><Button title="继续播放" onPress={() => setPanel(null)} />
+            <Text style={ui.muted}>喜欢和收藏仅修改本机。评论可选择登录抖音后查看完整内容。</Text><Button title="继续播放" onPress={() => setPanel(null)} />
           </>}
     </ActionSheet>
     {groupId && <FolderSheet workId={groupId} onClose={() => setGroupId(null)} />}
