@@ -12,9 +12,10 @@ import {
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
-const MOBILE_UA =
-  'Mozilla/5.0 (Linux; Android 13; 2210132C Build/TKQ1.220829.002) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36';
 const HOME = 'https://www.douyin.com/';
+// Desktop login page: forces the QR login overlay. The mobile site only shows a
+// "download app" landing page, so login must be done on the desktop layout.
+const LOGIN_URL = 'https://www.douyin.com/user/self?showTab=like';
 // Force a desktop-like navigator so the PC page's fingerprint stays consistent.
 const FINGERPRINT = `(function(){try{Object.defineProperty(navigator,'platform',{get:function(){return 'Win32';}});Object.defineProperty(navigator,'hardwareConcurrency',{get:function(){return 8;}});}catch(e){}})();true;`;
 
@@ -174,10 +175,10 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
           <Pressable accessibilityRole="button" accessibilityLabel="取消登录" onPress={closeLogin} hitSlop={10}><Text style={styles.loginCancel}>取消</Text></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="完成登录" onPress={() => { void completeLogin(); }} disabled={checking} hitSlop={10}><Text style={[styles.loginDone, checking && styles.loginDoneBusy]}>{checking ? '检测中…' : '完成'}</Text></Pressable>
         </View>
-        <Text style={styles.loginHint}>在弹出的抖音页面扫码或短信登录；登录后点右上角“完成”。{loginError ? `\n${loginError}` : ''}</Text>
+        <Text style={styles.loginHint}>在下方抖音页面用抖音 App 扫码登录（点“登录”会出现二维码）；登录成功后点右上角“完成”。{loginError ? `\n${loginError}` : ''}</Text>
         <WebView
-          source={{ uri: HOME }}
-          userAgent={MOBILE_UA}
+          source={{ uri: LOGIN_URL }}
+          userAgent={DESKTOP_UA}
           javaScriptEnabled
           domStorageEnabled
           sharedCookiesEnabled
