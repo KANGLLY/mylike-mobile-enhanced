@@ -44,7 +44,7 @@ const FullCommentRow = memo(function FullCommentRow({ item, depth, onToggleRepli
 
 export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
   const insets = useSafeAreaInsets();
-  const { request, loggedIn, openLogin } = useDouyinSession();
+  const { request, loggedIn, openLogin, checkLogin, loginDebug } = useDouyinSession();
   const [result, setResult] = useState<GuestCommentPreview | null>(() => cachedGuestComments(workId));
   const [error, setError] = useState(''); const [refreshing, setRefreshing] = useState(false); const [attempt, setAttempt] = useState(0);
   const [fullComments, setFullComments] = useState<FullComment[]>([]); const [fullCursor, setFullCursor] = useState<string | null>(null);
@@ -53,6 +53,15 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const offset = useSharedValue(height); const closing = useSharedValue(false); const previousClose = useRef(closeRequest);
   const scrollY = useSharedValue(0); const start = useSharedValue({ x: 0, y: 0 }); const [dragging, setDragging] = useState(false);
   const current = result?.workId === workId ? result : null;
+
+  // Detect an already-signed-in session the first time the sheet opens, so a
+  // returning user does not have to open the login page and press "完成" again.
+  const initedRef = useRef(false);
+  useEffect(() => {
+    if (initedRef.current) return;
+    initedRef.current = true;
+    if (!loggedIn) void checkLogin(true);
+  }, [checkLogin, loggedIn]);
 
   const loadFull = useCallback(async (cursor: string, append: boolean) => {
     if (append) setFullLoadingMore(true); else setFullLoading(true);
@@ -148,6 +157,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     {loggedIn
       ? <View style={styles.noticeFull}><Text style={styles.noticeFullText}>已登录 · 完整评论，支持翻页和楼中楼回复</Text>{fullLoading && <ActivityIndicator size="small" color="#3ddc84" />}</View>
       : <View style={styles.notice}><Text style={styles.noticeText}>游客有限预览 · 登录后可看完整评论和回复</Text><Pressable accessibilityRole="button" accessibilityLabel="登录抖音" onPress={openLogin} hitSlop={8}><Text style={styles.loginCta}>登录</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="刷新评论预览" disabled={refreshing} onPress={retry} hitSlop={8}><Text style={styles.retry}>{refreshing ? '读取中' : '刷新'}</Text></Pressable></View>}
+    {!loggedIn && loginDebug ? <Text style={styles.debug}>{loginDebug}</Text> : null}
     {loggedIn
       ? <>
         {fullLoading && !fullComments.length && <ActivityIndicator color="#888" style={styles.loading} />}
@@ -177,6 +187,7 @@ const styles = StyleSheet.create({
   title: { color: '#fff', fontWeight: '600', fontSize: 14 }, close: { position: 'absolute', right: 20, top: 14 }, closeText: { color: '#d8d8de', fontSize: 25 },
   notice: { backgroundColor: '#2c2718', paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeText: { color: '#e8c477', fontSize: 11, flex: 1 },
   noticeFull: { backgroundColor: '#16241d', paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeFullText: { color: '#7fdcaa', fontSize: 11, flex: 1 },
+  debug: { color: '#8b8b96', fontSize: 10, paddingHorizontal: 14, paddingBottom: 6, backgroundColor: '#20222e' },
   loginCta: { color: '#fc2f56', fontSize: 12, fontWeight: '600' },
   list: { padding: 16 }, loading: { padding: 28 }, error: { padding: 16, gap: 9, alignItems: 'center' }, more: { padding: 14, alignItems: 'center' },
   row: { flexDirection: 'row', gap: 11, marginBottom: 25 }, replyRow: { marginBottom: 14, paddingLeft: 8 }, avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#2a2c3a' }, replyAvatar: { width: 26, height: 26, borderRadius: 13 }, body: { flex: 1, gap: 6 },

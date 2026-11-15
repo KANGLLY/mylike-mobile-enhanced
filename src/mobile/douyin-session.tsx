@@ -1,9 +1,17 @@
-// App-wide Douyin session: a hidden desktop-page WebView that signs and runs
-// comment requests, plus an interactive mobile WebView the user logs into.
-// Cookies live in the shared Android CookieManager, so after login the hidden
-// desktop page's fetch() is authenticated too.
+// App-wide Douyin session.
+//
+// One single persistent desktop WebView is the source of truth: it is the page
+// the user scans the QR code on, AND the page that signs/runs every comment
+// request. Keeping login and requests in the same WebView means the request
+// always carries the exact cookies that were just set by the login flow — no
+// cross-WebView cookie sharing to rely on.
+//
+// Normally the WebView is parked at 2x2 in a corner (invisible, non-interactive).
+// When the user taps "登录" it is expanded full-screen over the app so they can
+// scan; the same native instance is reused, so the session is never rebuilt.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Modal, Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
   buildBridgeScript, CommentReadError, parseBridgeMessage, parseSelf,
@@ -12,7 +20,6 @@ import {
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
-const HOME = 'https://www.douyin.com/';
 // Desktop login page: forces the QR login overlay. The mobile site only shows a
 // "download app" landing page, so login must be done on the desktop layout.
 const LOGIN_URL = 'https://www.douyin.com/user/self?showTab=like';
@@ -27,23 +34,36 @@ export type DouyinSessionValue = {
   checking: boolean;
   loginVisible: boolean;
   loginError: string;
+  loginDebug: string;
   nickname: string;
   openLogin: () => void;
   closeLogin: () => void;
   completeLogin: () => Promise<boolean>;
-  checkLogin: () => Promise<boolean>;
+  checkLogin: (silent?: boolean) => Promise<boolean>;
   request: (operation: BridgeOperation, parameters: Record<string, string>, timeoutMs?: number) => Promise<BridgeResult>;
 };
 
 const fallback: DouyinSessionValue = {
-  mounted: false, loggedIn: false, checking: false, loginVisible: false, loginError: '', nickname: '',
+  mounted: false, loggedIn: false, checking: false, loginVisible: false, loginError: '', loginDebug: '', nickname: '',
   openLogin: () => {}, closeLogin: () => {}, completeLogin: async () => false, checkLogin: async () => false,
   request: async () => { throw new CommentReadError('bridge', '评论服务尚未就绪。'); },
 };
 const SessionContext = createContext<DouyinSessionValue>(fallback);
 export function useDouyinSession(): DouyinSessionValue { return useContext(SessionContext); }
 
+// Turn a raw self-endpoint response into a short human label for on-screen
+// diagnostics, e.g. "HTTP 200 · status_code=8".
+function describeSelf(status: number, body: string): string {
+  if (status === 0) return '无法连接（网络错误）';
+  if (!body.trim()) return `HTTP ${status} · 空响应`;
+  const match = body.match(/"status_code"\s*:\s*"?(-?\d+)"?/);
+  if (match) return `HTTP ${status} · status_code=${match[1]}`;
+  if (/<(?:html|!doctype)/i.test(body.slice(0, 200))) return `HTTP ${status} · 返回网页`;
+  return `HTTP ${status}`;
+}
+
 export function DouyinSessionProvider({ children }: { children: ReactNode }) {
+  const insets = useSafeAreaInsets();
   const webRef = useRef<any>(null);
   const pending = useRef(new Map<string, Pending>());
   const sequence = useRef(0);
@@ -56,6 +76,7 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(false);
   const [loginVisible, setLoginVisible] = useState(false);
   const [loginError, setLoginError] = useState('');
+  const [loginDebug, setLoginDebug] = useState('');
 
   const ensureBridge = useCallback((): Promise<void> => {
     if (!ready.current) {
@@ -63,7 +84,7 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
       const promise = new Promise<void>(done => { resolve = done; });
       ready.current = { promise, resolve };
       // Never let a stalled page load block every request forever.
-      setTimeout(() => ready.current?.resolve(), 18_000);
+      setTimeout(() => ready.current?.resolve(), 20_000);
     }
     if (!mountedRef.current) { mountedRef.current = true; setMounted(true); }
     return ready.current.promise;
@@ -103,20 +124,29 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
     });
   }, [ensureBridge]);
 
-  const checkLogin = useCallback(async (): Promise<boolean> => {
-    setChecking(true);
+  // One probe of the self endpoint; also records a diagnostic label.
+  const probe = useCallback(async (): Promise<{ loggedIn: boolean; label: string }> => {
     try {
       const result = await request('self', {});
       const state = parseSelf(result.body, result.status);
+      const label = describeSelf(result.status, result.body);
       setLoggedIn(state.loggedIn);
-      setNickname(state.nickname ?? '');
-      return state.loggedIn;
-    } catch {
-      return false;
-    } finally {
-      setChecking(false);
+      if (state.loggedIn) setNickname(state.nickname ?? '');
+      setLoginDebug(`登录检测：${label}`);
+      return { loggedIn: state.loggedIn, label };
+    } catch (failure) {
+      const message = failure instanceof Error ? failure.message : '未知错误';
+      setLoginDebug(`登录检测失败：${message}`);
+      return { loggedIn: false, label: `检测失败：${message}` };
     }
   }, [request]);
+
+  const detect = useCallback(async (silent: boolean): Promise<boolean> => {
+    if (!silent) setChecking(true);
+    try { return (await probe()).loggedIn; } finally { if (!silent) setChecking(false); }
+  }, [probe]);
+
+  const checkLogin = useCallback((silent = false) => detect(silent), [detect]);
 
   const openLogin = useCallback(() => {
     setLoginError('');
@@ -127,31 +157,42 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
   const closeLogin = useCallback(() => setLoginVisible(false), []);
 
   const completeLogin = useCallback(async (): Promise<boolean> => {
-    setChecking(true);
     setLoginError('');
-    try {
-      const ok = await checkLogin();
-      if (ok) { setLoginVisible(false); return true; }
-      setLoginError('还没有检测到登录状态，请在上方页面完成扫码登录后再点完成。');
-      return false;
-    } finally {
-      setChecking(false);
-    }
-  }, [checkLogin]);
+    setChecking(true);
+    let result: { loggedIn: boolean; label: string };
+    try { result = await probe(); } finally { setChecking(false); }
+    if (result.loggedIn) { setLoginVisible(false); return true; }
+    setLoginError(`还没有检测到登录状态。${result.label}`);
+    return false;
+  }, [probe]);
+
+  // While the login page is open, quietly poll the self endpoint. As soon as the
+  // QR scan lands and cookies are set, the modal closes on its own.
+  useEffect(() => {
+    if (!loginVisible) return;
+    let alive = true;
+    const tick = async () => {
+      const ok = await detect(true);
+      if (alive && ok) setLoginVisible(false);
+    };
+    const first = setTimeout(tick, 1500);
+    const interval = setInterval(tick, 3000);
+    return () => { alive = false; clearTimeout(first); clearInterval(interval); };
+  }, [loginVisible, detect]);
 
   useEffect(() => () => { for (const entry of pending.current.values()) clearTimeout(entry.timer); }, []);
 
   const value = useMemo<DouyinSessionValue>(() => ({
-    mounted, loggedIn, checking, loginVisible, loginError, nickname,
+    mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname,
     openLogin, closeLogin, completeLogin, checkLogin, request,
-  }), [mounted, loggedIn, checking, loginVisible, loginError, nickname, openLogin, closeLogin, completeLogin, checkLogin, request]);
+  }), [mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname, openLogin, closeLogin, completeLogin, checkLogin, request]);
 
   return <SessionContext.Provider value={value}>
     {children}
-    {mounted && <View pointerEvents="none" style={styles.bridge} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+    {mounted && <View style={loginVisible ? styles.overlay : styles.hidden} pointerEvents={loginVisible ? 'auto' : 'none'} accessibilityElementsHidden={!loginVisible} importantForAccessibility={loginVisible ? 'auto' : 'no-hide-descendants'}>
       <WebView
         ref={webRef}
-        source={{ uri: HOME }}
+        source={{ uri: LOGIN_URL }}
         userAgent={DESKTOP_UA}
         injectedJavaScriptBeforeContentLoaded={FINGERPRINT}
         onMessage={onMessage}
@@ -166,41 +207,28 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
         setSupportMultipleWindows={false}
         style={styles.webview}
       />
-    </View>}
-    <Modal visible={loginVisible} animationType="slide" onRequestClose={closeLogin} transparent={false}>
-      <SafeAreaView style={styles.loginRoot}>
-        <StatusBar barStyle="dark-content" />
+      {loginVisible && <View style={[styles.loginChrome, { paddingTop: insets.top }]} pointerEvents="box-none">
+        <StatusBar barStyle="light-content" />
         <View style={styles.loginHeader}>
-          <Text style={styles.loginTitle}>登录抖音</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="取消登录" onPress={closeLogin} hitSlop={10}><Text style={styles.loginCancel}>取消</Text></Pressable>
+          <Text style={styles.loginTitle}>登录抖音</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="完成登录" onPress={() => { void completeLogin(); }} disabled={checking} hitSlop={10}><Text style={[styles.loginDone, checking && styles.loginDoneBusy]}>{checking ? '检测中…' : '完成'}</Text></Pressable>
         </View>
-        <Text style={styles.loginHint}>在下方抖音页面用抖音 App 扫码登录（点“登录”会出现二维码）；登录成功后点右上角“完成”。{loginError ? `\n${loginError}` : ''}</Text>
-        <WebView
-          source={{ uri: LOGIN_URL }}
-          userAgent={DESKTOP_UA}
-          javaScriptEnabled
-          domStorageEnabled
-          sharedCookiesEnabled
-          thirdPartyCookiesEnabled
-          originWhitelist={['*']}
-          mixedContentMode="always"
-          setSupportMultipleWindows={false}
-          style={styles.webview}
-        />
-      </SafeAreaView>
-    </Modal>
+        <Text style={styles.loginHint}>用抖音 App 扫码登录（桌面版会显示二维码）。登录成功后本页会自动关闭。{(loginDebug || loginError) ? `\n${loginDebug}${loginError ? `\n${loginError}` : ''}` : ''}</Text>
+      </View>}
+    </View>}
   </SessionContext.Provider>;
 }
 
 const styles = StyleSheet.create({
-  bridge: { position: 'absolute', left: 0, top: 0, width: 2, height: 2, opacity: 0.01, overflow: 'hidden' },
+  hidden: { position: 'absolute', left: 0, top: 0, width: 2, height: 2, opacity: 0.01, overflow: 'hidden' },
+  overlay: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, zIndex: 1000, elevation: 1000, backgroundColor: '#151723' },
   webview: { flex: 1, backgroundColor: '#fff' },
-  loginRoot: { flex: 1, backgroundColor: '#151723' },
+  loginChrome: { position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1001, elevation: 1001, backgroundColor: '#151723' },
   loginHeader: { height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#2c2f3d' },
   loginTitle: { fontSize: 16, fontWeight: '600', color: '#fff' },
   loginCancel: { fontSize: 15, color: '#bababb' },
   loginDone: { fontSize: 15, fontWeight: '600', color: '#fc2f56' },
   loginDoneBusy: { color: '#666' },
-  loginHint: { fontSize: 12, lineHeight: 18, color: '#9a9aa5', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#22242f' },
+  loginHint: { fontSize: 12, lineHeight: 18, color: '#c7c7cf', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#22242f' },
 });
