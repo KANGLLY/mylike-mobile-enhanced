@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useIsFocused } from '@react-navigation/native';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, FlatList, Image, Modal, Pressable, StatusBar, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, FlatList, Image, Modal, Pressable, StatusBar, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { GestureDetector, GestureHandlerRootView, usePanGesture } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
@@ -14,6 +14,8 @@ import { MediaSlot, type MediaControl, type MediaInfo } from './Media';
 import { rates, type Scope, type Session, type Source } from './model';
 import { SeekRail } from './SeekRail';
 import { DanmakuOverlay } from './Danmaku';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import { saveWorkMedia, type SaveKind } from './save-media';
 
 import { FolderSheet } from './FolderSheet';
 import { feedChrome, mediaAreaHeight } from './layout';
@@ -71,6 +73,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   const [comments, setComments] = useState(false); const [panel, setPanel] = useState<'options' | 'queue' | 'share' | null>(null); const [avatarFailed, setAvatarFailed] = useState(false);
   const [commentsClosing, setCommentsClosing] = useState(false); const [commentCloseRequest, setCommentCloseRequest] = useState(0);
   const [groupId, setGroupId] = useState<string | null>(null);
+  const [landscape, setLandscape] = useState(false); const [saving, setSaving] = useState(false);
   const [foreground, setForeground] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
   const x = useSharedValue(0); const photoX = useSharedValue(0); const mediaHeight = useSharedValue(height); const heart = useSharedValue(0);
   const mediaTargetHeight = comments && !commentsClosing ? height * 0.3 : playbackHeight;
@@ -184,6 +187,21 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
     if (pending === id && preferences.auto && !next()) setPaused(true);
   }, [pinching, moving, playing, paused, id, preferences.auto, next]);
   function retry() { setPaused(false); control.current?.retry(); }
+  async function toggleLandscape() {
+    const next = !landscape;
+    try {
+      await ScreenOrientation.lockAsync(next ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      setLandscape(next);
+    } catch { /* orientation lock can be rejected while another screen owns it */ }
+  }
+  async function doSave(kind: SaveKind) {
+    if (!current.data || saving) return;
+    setSaving(true);
+    try { const message = await saveWorkMedia(current.data, kind); Alert.alert('保存成功', message); }
+    catch (failure) { Alert.alert('保存失败', failure instanceof Error ? failure.message : '请稍后重试。'); }
+    finally { setSaving(false); }
+  }
+  useEffect(() => () => { void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); }, []);
   const author = current.data?.author || current.work?.author || '未知作者';
   const authorGroup = current.work?.author || author;
   const countLabel = (value: number | undefined, fallback: string) => value === undefined ? fallback : value >= 10000 ? `${(value / 10000).toFixed(1)}万` : String(value);
@@ -261,6 +279,11 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
             <Button title={preferences.clear ? '退出清屏' : '清屏'} selected={preferences.clear} onPress={() => setPreferences({ clear: !preferences.clear })} />
             <Button title={preferences.danmaku ? '弹幕：开' : '弹幕：关'} selected={preferences.danmaku} onPress={() => setPreferences({ danmaku: !preferences.danmaku })} />
             <Button title="播放队列" onPress={() => setPanel('queue')} /><Button title="重新打乱" onPress={() => { setPanel(null); reshuffle(); }} /><Button title="重新取链" onPress={() => { setPanel(null); retry(); }} />
+          </View><View style={styles.options}>
+            <Button title={landscape ? '横屏播放：开' : '横屏播放：关'} selected={landscape} onPress={() => { void toggleLandscape(); }} />
+            {current.data && 'candidates' in current.data && current.data.candidates.length > 0 && <Button title={saving ? '保存中…' : '保存视频'} disabled={saving} onPress={() => { void doSave('video'); }} />}
+            {current.data && 'images' in current.data && current.data.images.length > 0 && <Button title={saving ? '保存中…' : '保存图片'} disabled={saving} onPress={() => { void doSave('images'); }} />}
+            {current.data && current.data.musicCandidates && current.data.musicCandidates.length > 0 && <Button title={saving ? '保存中…' : '保存音频'} disabled={saving} onPress={() => { void doSave('audio'); }} />}
           </View><Text style={ui.muted}>播放速度</Text><View style={styles.options}>{rates.map(rate => <Button key={rate} title={`${rate}×`} selected={preferences.rate === rate} onPress={() => { setBoostLocked(false); setPreferences({ rate }); }} />)}</View>
             <Text style={ui.muted}>喜欢和收藏仅修改本机。评论可选择登录抖音后查看完整内容。</Text><Button title="继续播放" onPress={() => setPanel(null)} />
           </>}

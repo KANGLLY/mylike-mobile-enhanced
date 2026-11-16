@@ -133,6 +133,10 @@ type ListRow =
   | { key: string; type: 'replyError'; comment: FullComment; error: string };
 
 type ReplyState = { items: FullComment[]; cursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string };
+type SheetCache = { workId: string; fullComments: FullComment[]; fullCursor: string | null; fullHasMore: boolean; repliesOpen: Record<string, boolean>; replyState: Record<string, ReplyState> };
+// One-slot cache so closing and reopening the sheet on the same video keeps the
+// loaded comments/replies instead of re-fetching; switching video drops it.
+let sheetCache: SheetCache | null = null;
 
 export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
   const insets = useSafeAreaInsets();
@@ -142,10 +146,11 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const { styles, C } = theme;
   const [result, setResult] = useState<GuestCommentPreview | null>(() => cachedGuestComments(workId));
   const [error, setError] = useState(''); const [refreshing, setRefreshing] = useState(false); const [attempt, setAttempt] = useState(0);
-  const [fullComments, setFullComments] = useState<FullComment[]>([]); const [fullCursor, setFullCursor] = useState<string | null>(null);
-  const [fullHasMore, setFullHasMore] = useState(false); const [fullLoading, setFullLoading] = useState(false); const [fullLoadingMore, setFullLoadingMore] = useState(false); const [fullError, setFullError] = useState('');
-  const [repliesOpen, setRepliesOpen] = useState<Record<string, boolean>>({});
-  const [replyState, setReplyState] = useState<Record<string, ReplyState>>({});
+  const seed = sheetCache && sheetCache.workId === workId ? sheetCache : null;
+  const [fullComments, setFullComments] = useState<FullComment[]>(seed?.fullComments ?? []); const [fullCursor, setFullCursor] = useState<string | null>(seed?.fullCursor ?? null);
+  const [fullHasMore, setFullHasMore] = useState(seed?.fullHasMore ?? false); const [fullLoading, setFullLoading] = useState(false); const [fullLoadingMore, setFullLoadingMore] = useState(false); const [fullError, setFullError] = useState('');
+  const [repliesOpen, setRepliesOpen] = useState<Record<string, boolean>>(seed?.repliesOpen ?? {});
+  const [replyState, setReplyState] = useState<Record<string, ReplyState>>(seed?.replyState ?? {});
   const offset = useSharedValue(height); const closing = useSharedValue(false); const previousClose = useRef(closeRequest);
   const scrollY = useSharedValue(0); const start = useSharedValue({ x: 0, y: 0 }); const [dragging, setDragging] = useState(false);
   const current = result?.workId === workId ? result : null;
@@ -236,6 +241,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
 
   useEffect(() => {
     if (!loggedIn) return;
+    if (sheetCache && sheetCache.workId === workId && sheetCache.fullComments.length > 0) return;
     setFullComments([]); setFullCursor(null); setFullHasMore(false); setRepliesOpen({}); setReplyState({});
     void loadFull('0', false);
   }, [loggedIn, workId, loadFull]);
@@ -280,6 +286,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
   const retry = () => { if (!refreshing) setAttempt(value => value + 1); };
   const retryFull = () => { if (!fullLoading) void loadFull(fullComments.length ? (fullCursor ?? '0') : '0', false); };
+  useEffect(() => { sheetCache = { workId, fullComments, fullCursor, fullHasMore, repliesOpen, replyState }; }, [workId, fullComments, fullCursor, fullHasMore, repliesOpen, replyState]);
   return <ThemeCtx.Provider value={theme}><Animated.View accessibilityViewIsModal style={[styles.sheet, { height }, style]}>
     <GestureDetector gesture={pan}><View style={styles.header}><View style={styles.grip} /><Text style={styles.title}>{loggedIn ? `评论 · ${fullComments.length} 条` : `评论预览${current ? ` · ${current.items.length} 条` : ''}`}</Text><Pressable accessibilityLabel="关闭评论" onPress={close} hitSlop={15} style={styles.close}><Text style={styles.closeText}>×</Text></Pressable></View></GestureDetector>
     {loggedIn

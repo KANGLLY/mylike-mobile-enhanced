@@ -21,6 +21,13 @@
     },
     "plugins": [
       [
+        "expo-media-library",
+        {
+          "photosPermission": "允许 MyLike 读取相册中的图片来设置自定义图标。",
+          "savePhotosPermission": "允许 MyLike 把视频、图片和音频保存到相册。"
+        }
+      ],
+      [
         "@semisquircle/expo-dynamic-app-icon",
         {
           "classic": {
