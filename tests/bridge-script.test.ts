@@ -119,6 +119,7 @@ test('comment replies are signed exactly like the comment list (regression: repl
     },
     document: { cookie: 'msToken=tok' },
     screen: { width: 1280, height: 800 },
+    console: { error() {}, log() {}, warn() {} },
     URLSearchParams, AbortController, setTimeout, clearTimeout,
     fetch: (url: string, options: any) => { requestedUrl = url; init = options; return Promise.resolve({ status: 200, text: () => Promise.resolve('{"status_code":0,"has_more":0,"comments":[]}') }); },
   };
@@ -131,6 +132,9 @@ test('comment replies are signed exactly like the comment list (regression: repl
   ok(requestedUrl.includes('pc_client_type=1'), 'adds the desktop fingerprint (the bug: replies skipped this)');
   ok(requestedUrl.includes('msToken=tok'), 'forwards msToken (the bug: replies skipped this)');
   equal(init.referrer, 'https://www.douyin.com/video/7708361831513969811');
+  ok(requestedUrl.includes('a_bogus='), 'signs the reply request with an a_bogus token');
+  const abogus = (requestedUrl.split('a_bogus=')[1] || '');
+  ok(abogus.length > 40, 'a_bogus token has a plausible length');
 });
 
 test('favourites reads POST cursor/count with the csrf downgrade header', async () => {
