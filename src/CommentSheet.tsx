@@ -49,10 +49,10 @@ type ListRow =
   | { key: string; type: 'comment'; item: FullComment }
   | { key: string; type: 'reply'; item: FullComment }
   | { key: string; type: 'moreReplies'; comment: FullComment; loading: boolean }
-  | { key: string; type: 'replyEmpty'; comment: FullComment }
+  | { key: string; type: 'replyEmpty'; comment: FullComment; diag?: string }
   | { key: string; type: 'replyError'; comment: FullComment; error: string };
 
-type ReplyState = { items: FullComment[]; cursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string };
+type ReplyState = { items: FullComment[]; cursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string; diag: string };
 
 export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
   const insets = useSafeAreaInsets();
@@ -106,37 +106,47 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   // back empty or errors.
   const loadReplies = useCallback(async (comment: FullComment, cursor: string, append: boolean) => {
     setReplyState(previous => {
-      const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '' } as ReplyState;
+      const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '', diag: '' } as ReplyState;
       return { ...previous, [comment.id]: { ...base, loading: true, error: '' } };
     });
     try {
       let page: CommentPage | null = null;
+      let diag = '';
       try {
         const response = await request('commentReplies', {
           item_id: workId, comment_id: comment.id, cursor, count: '20', item_type: '0',
-        });
+        }, 8000);
+        diag = `页面 HTTP ${response.status} / ${(response.body || '').length}B`;
         page = parseCommentList(response.body, workId, cursor, response.status);
-      } catch { page = null; }
+      } catch (failure) {
+        const message = failure instanceof Error ? failure.message : String(failure);
+        diag += `${diag ? ' · ' : ''}页面异常 ${message}`;
+        page = null;
+      }
       if (!page || (page.items.length === 0 && !page.hasMore)) {
         try {
           const fallback = await fetchGuestReplies(workId, comment.id, cursor);
+          diag += `${diag ? ' · ' : ''}备用 ${fallback.items.length} 条`;
           if (!page || fallback.items.length > 0 || fallback.hasMore) page = fallback;
-        } catch { /* keep whatever the page route returned */ }
+        } catch (failure) {
+          const message = failure instanceof Error ? failure.message : String(failure);
+          diag += `${diag ? ' · ' : ''}备用失败 ${message}`;
+        }
       }
       if (!page) throw new Error('回复读取失败，请重试。');
       const resolved = page;
       setReplyState(previous => {
-        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, error: '', loading: false } as ReplyState;
+        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, error: '', loading: false, diag: '' } as ReplyState;
         const seen = new Set(base.items.map(item => item.id));
         const merged = append ? base.items.slice() : [];
         if (!append) seen.clear();
         for (const item of resolved.items) if (!seen.has(item.id)) { merged.push(item); seen.add(item.id); }
-        return { ...previous, [comment.id]: { items: merged, cursor: resolved.nextCursor, hasMore: resolved.hasMore, loaded: true, loading: false, error: '' } };
+        return { ...previous, [comment.id]: { items: merged, cursor: resolved.nextCursor, hasMore: resolved.hasMore, loaded: true, loading: false, error: '', diag } };
       });
     } catch (failure) {
       const message = failure instanceof Error ? failure.message : '回复读取失败，请重试。';
       setReplyState(previous => {
-        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '' } as ReplyState;
+        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '', diag: '' } as ReplyState;
         return { ...previous, [comment.id]: { ...base, loading: false, error: message } };
       });
     }
@@ -158,7 +168,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
       if (state?.items.length) for (const reply of state.items) out.push({ key: `${comment.id}_${reply.id}`, type: 'reply', item: reply });
       if (state?.error) out.push({ key: `${comment.id}_err`, type: 'replyError', comment, error: state.error });
       else if (state?.hasMore && state.cursor) out.push({ key: `${comment.id}_more`, type: 'moreReplies', comment, loading: state.loading });
-      else if (state?.loaded && state.items.length === 0) out.push({ key: `${comment.id}_empty`, type: 'replyEmpty', comment });
+      else if (state?.loaded && state.items.length === 0) out.push({ key: `${comment.id}_empty`, type: 'replyEmpty', comment, diag: state?.diag });
     }
     return out;
   }, [fullComments, repliesOpen, replyState]);
@@ -232,7 +242,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
             }
             if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} />;
             if (item.type === 'moreReplies') return <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true)} style={styles.replyMore}><Text style={styles.retry}>{item.loading ? '正在读取更多回复…' : '加载更多回复'}</Text></Pressable>;
-            if (item.type === 'replyEmpty') return <Text style={styles.replyEmpty}>暂无可见回复</Text>;
+            if (item.type === 'replyEmpty') return <Text style={styles.replyEmpty}>暂无可见回复{item.diag ? `（${item.diag}）` : ''}</Text>;
             return <Pressable accessibilityRole="button" onPress={() => void loadReplies(item.comment, '0', false)} style={styles.replyError}><Text style={styles.meta}>回复读取失败：{item.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>;
           }} /></GestureDetector> : null}
       </>
