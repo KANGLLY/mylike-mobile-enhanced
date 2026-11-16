@@ -4,17 +4,19 @@
 
 # MyLike 移动端
 
-**在 iPhone 和 Android 上回看你的喜欢。**
+**在 Android 上回看你的喜欢。**
 
 导入 MyLike 桌面端的喜欢与收藏清单，随时查找、播放和续看。
 
-[![Android](https://img.shields.io/badge/Android-APK-3ddc84?style=flat-square)](https://github.com/Hannah2227/mylike-mobile/releases)
-[![iOS](https://img.shields.io/badge/iOS-IPA-5865f2?style=flat-square)](https://github.com/Hannah2227/mylike-mobile/releases)
+[![Android](https://img.shields.io/badge/Android-APK-3ddc84?style=flat-square)](https://github.com/KANGLLY/mylike-mobile-enhanced/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6bb99b?style=flat-square)](LICENSE)
 
-[下载应用](https://github.com/Hannah2227/mylike-mobile/releases) · [功能特性](#功能特性) · [界面预览](#界面预览) · [快速上手](#快速上手) · [反馈问题](https://github.com/Hannah2227/mylike-mobile/issues)
+[下载应用](https://github.com/KANGLLY/mylike-mobile-enhanced/releases) · [功能特性](#功能特性) · [界面预览](#界面预览) · [快速上手](#快速上手) · [反馈问题](https://github.com/KANGLLY/mylike-mobile-enhanced/issues)
 
 </div>
+
+> **声明：** 本仓库为基于 [Hannah2227/MyLike](https://github.com/Hannah2227/mylike-mobile)（MIT，Copyright © 2026 MyLike）的修改版（非官方 / unofficial）。
+> 原作品版权归原作者所有；本版遵循 MIT 许可证，详见仓库 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
 
 ## 界面预览
 
@@ -33,7 +35,7 @@
 
 ## 下载
 
-前往 [GitHub Releases](https://github.com/Hannah2227/mylike-mobile/releases) 下载。
+前往 [GitHub Releases](https://github.com/KANGLLY/mylike-mobile-enhanced/releases) 下载。
 
 > 注意：移动端不用登录，但是只能播放不能采集，需要通过 MyLike 桌面版导出列表后再导入
 
@@ -41,21 +43,19 @@
 
 下载 `.apk`，在手机上打开文件并按系统提示安装。
 
-### iPhone
-
-下载 `.ipa`。在电脑上用 Sideloadly 签名并安装。
-
-1. 用数据线连接设备 在 iPhone 上点「信任此电脑」并输入锁屏密码。
-2. 下载iTunes和Sideloadly，然后打开 Sideloadly，确认顶部识别到你的设备。
-3. 把未签名的 .ipa 拖进 Sideloadly 窗口。Apple ID 填你的，不用填密码到这里。
-4. 点 Start 按提示输入 Apple ID 和密码。
-5. 等待安装完成，看到 ✅ Done。
-6. iPhone 上信任证书：这两步必做，否则打不开。
-   - 设置 → 通用 → VPN 与设备管理 → 找到你的 Apple ID → 点「信任」
-   - 设置 → 隐私与安全性 → 开启开发者模式
-7. 打开 App。免费 Apple 账号签名需要定期续签。
-
 ## 功能特性
+
+**本版新增 / 增强（相对原版 MyLike）：**
+
+- **完整评论区** — 登录抖音后可查看全部评论并翻页；楼中楼回复首次展开 3 条、之后每次 10 条，可「展开更多 / 收起」，回复缩进区分。
+- **评论主题与表情** — 评论区支持深色 / 浅色两套背景；评论内联显示抖音原生小表情，支持表情包 / 大表情与图片评论缩略图。
+- **点赞 / 收藏同步** — 登录后把「我的喜欢 / 我的收藏」同步到本机，支持「更新顶部（只补最新）」「向下采集（继续更旧）」，可后台继续、显示进度、随时取消。
+- **导出清单** — 把喜欢的作品导出为 JSON，可导入 PC 桌面版 MyLike。
+- **播放增强** — 长按二倍速（竖屏 / 全屏）、横向视频「全屏观看」（画面放大不旋转整机）、可开关弹幕（速度对齐抖音）。
+- **保存到相册** — 长按菜单可把视频、图集图片、音频保存到手机。
+- **细节优化** — 同一视频的评论关闭再打开不重新加载；默认爱心桌面图标。
+
+**原版功能（MyLike 自带）：**
 
 - **清单导入** — 支持桌面端导出的喜欢和收藏 JSON，预览新增与重复条数，按作品 ID 合并，保留收藏夹关系。
 - **本机管理** — 喜欢、收藏与收藏夹在手机上独立管理，支持多个本机账号空间，不修改抖音账号状态。
@@ -84,7 +84,7 @@ npm ci
 npm start
 ```
 
-使用支持 SDK 58 的 Expo Go 调试。普通启动和 Actions 共用首页／导入／我的入口；`npm run start:m1` 为 8083 端口的启动别名。`npm run typecheck` 检查类型，`npm test` 运行测试。维护者可在 Actions 手动运行 **Build Android test APK** 和 **Build iPhone test IPA**，在 Artifacts 获取独立测试包。iOS 产物为未签名 IPA，安装前需自行签名。 [Expo Go](https://expo.dev/go) · [构建工作流](https://github.com/Hannah2227/mylike-mobile/actions)
+使用支持 SDK 58 的 Expo Go 调试。普通启动和 Actions 共用首页／导入／我的入口；`npm run start:m1` 为 8083 端口的启动别名。`npm run typecheck` 检查类型，`npm test` 运行测试。维护者可在 Actions 手动运行 **Build Android test APK**，在 Artifacts 获取独立测试包。 [Expo Go](https://expo.dev/go) · [构建工作流](https://github.com/Hannah2227/mylike-mobile/actions)
 
 ## 免责声明
 
