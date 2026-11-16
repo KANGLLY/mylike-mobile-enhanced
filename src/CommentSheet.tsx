@@ -42,6 +42,16 @@ const FullCommentRow = memo(function FullCommentRow({ item, depth, onToggleRepli
   </View>;
 });
 
+// One row in the flat list. Replies are flattened to depth 1, followed by an
+// optional "load more replies" row or an inline reply error row.
+type ListRow =
+  | { key: string; type: 'comment'; item: FullComment }
+  | { key: string; type: 'reply'; item: FullComment }
+  | { key: string; type: 'moreReplies'; comment: FullComment; loading: boolean }
+  | { key: string; type: 'replyError'; comment: FullComment; error: string };
+
+type ReplyState = { items: FullComment[]; cursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string };
+
 export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
   const insets = useSafeAreaInsets();
   const { request, loggedIn, openLogin, checkLogin, loginDebug } = useDouyinSession();
@@ -49,7 +59,8 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const [error, setError] = useState(''); const [refreshing, setRefreshing] = useState(false); const [attempt, setAttempt] = useState(0);
   const [fullComments, setFullComments] = useState<FullComment[]>([]); const [fullCursor, setFullCursor] = useState<string | null>(null);
   const [fullHasMore, setFullHasMore] = useState(false); const [fullLoading, setFullLoading] = useState(false); const [fullLoadingMore, setFullLoadingMore] = useState(false); const [fullError, setFullError] = useState('');
-  const [replies, setReplies] = useState<Record<string, FullComment[]>>({}); const [repliesOpen, setRepliesOpen] = useState<Record<string, boolean>>({}); const [repliesBusy, setRepliesBusy] = useState<Record<string, boolean>>({});
+  const [repliesOpen, setRepliesOpen] = useState<Record<string, boolean>>({});
+  const [replyState, setReplyState] = useState<Record<string, ReplyState>>({});
   const offset = useSharedValue(height); const closing = useSharedValue(false); const previousClose = useRef(closeRequest);
   const scrollY = useSharedValue(0); const start = useSharedValue({ x: 0, y: 0 }); const [dragging, setDragging] = useState(false);
   const current = result?.workId === workId ? result : null;
@@ -67,7 +78,11 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     if (append) setFullLoadingMore(true); else setFullLoading(true);
     setFullError('');
     try {
-      const response = await request('comments', { aweme_id: workId, cursor, count: '20' });
+      // Same parameter set the desktop app sends for the web comment endpoint.
+      const response = await request('comments', {
+        aweme_id: workId, cursor, count: '20', item_type: '0',
+        insert_ids: '', whale_cut_token: '', cut_version: '1', rcFT: '',
+      });
       const page = parseCommentList(response.body, workId, cursor, response.status);
       setFullComments(previous => {
         const next = append ? previous.slice() : [];
@@ -82,33 +97,58 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     } finally { if (append) setFullLoadingMore(false); else setFullLoading(false); }
   }, [request, workId]);
 
-  const toggleReplies = useCallback(async (comment: FullComment) => {
+  // Load a page of replies for one comment (the /comment/list/reply/ endpoint).
+  const loadReplies = useCallback(async (comment: FullComment, cursor: string, append: boolean) => {
+    setReplyState(previous => {
+      const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '' } as ReplyState;
+      return { ...previous, [comment.id]: { ...base, loading: true, error: '' } };
+    });
+    try {
+      // item_id + comment_id + item_type is exactly what the desktop app uses.
+      const response = await request('commentReplies', {
+        cursor, count: '20', item_type: '0', item_id: workId, comment_id: comment.id,
+      });
+      const page = parseCommentList(response.body, workId, cursor, response.status);
+      setReplyState(previous => {
+        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, error: '', loading: false } as ReplyState;
+        const seen = new Set(base.items.map(item => item.id));
+        const merged = append ? base.items.slice() : [];
+        if (!append) seen.clear();
+        for (const item of page.items) if (!seen.has(item.id)) { merged.push(item); seen.add(item.id); }
+        return { ...previous, [comment.id]: { items: merged, cursor: page.nextCursor, hasMore: page.hasMore, loaded: true, loading: false, error: '' } };
+      });
+    } catch (failure) {
+      const message = failure instanceof Error ? failure.message : '回复读取失败，请重试。';
+      setReplyState(previous => {
+        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '' } as ReplyState;
+        return { ...previous, [comment.id]: { ...base, loading: false, error: message } };
+      });
+    }
+  }, [request, workId]);
+
+  const toggleReplies = useCallback((comment: FullComment) => {
     if (repliesOpen[comment.id]) { setRepliesOpen(previous => ({ ...previous, [comment.id]: false })); return; }
     setRepliesOpen(previous => ({ ...previous, [comment.id]: true }));
-    if (replies[comment.id]) return;
-    setRepliesBusy(previous => ({ ...previous, [comment.id]: true }));
-    try {
-      const response = await request('commentReplies', { item_id: workId, comment_id: comment.id, cursor: '0', count: '20' });
-      const page = parseCommentList(response.body, workId, '0', response.status);
-      setReplies(previous => ({ ...previous, [comment.id]: page.items }));
-    } catch (failure) {
-      setRepliesOpen(previous => ({ ...previous, [comment.id]: false }));
-      setFullError(failure instanceof Error ? failure.message : '回复读取失败，请重试。');
-    } finally { setRepliesBusy(previous => ({ ...previous, [comment.id]: false })); }
-  }, [repliesOpen, replies, request, workId]);
+    const state = replyState[comment.id];
+    if (!state || (!state.loaded && !state.loading)) void loadReplies(comment, '0', false);
+  }, [repliesOpen, replyState, loadReplies]);
 
-  const rows = useMemo(() => {
-    const out: { key: string; item: FullComment; depth: number }[] = [];
+  const rows = useMemo<ListRow[]>(() => {
+    const out: ListRow[] = [];
     for (const comment of fullComments) {
-      out.push({ key: comment.id, item: comment, depth: 0 });
-      if (repliesOpen[comment.id] && replies[comment.id]) for (const reply of replies[comment.id]!) out.push({ key: `${comment.id}_${reply.id}`, item: reply, depth: 1 });
+      out.push({ key: comment.id, type: 'comment', item: comment });
+      if (!repliesOpen[comment.id]) continue;
+      const state = replyState[comment.id];
+      if (state?.items.length) for (const reply of state.items) out.push({ key: `${comment.id}_${reply.id}`, type: 'reply', item: reply });
+      if (state?.error) out.push({ key: `${comment.id}_err`, type: 'replyError', comment, error: state.error });
+      else if (state?.hasMore && state.cursor) out.push({ key: `${comment.id}_more`, type: 'moreReplies', comment, loading: state.loading });
     }
     return out;
-  }, [fullComments, replies, repliesOpen]);
+  }, [fullComments, repliesOpen, replyState]);
 
   useEffect(() => {
     if (!loggedIn) return;
-    setFullComments([]); setFullCursor(null); setFullHasMore(false); setReplies({}); setRepliesOpen({}); setRepliesBusy({});
+    setFullComments([]); setFullCursor(null); setFullHasMore(false); setRepliesOpen({}); setReplyState({});
     void loadFull('0', false);
   }, [loggedIn, workId, loadFull]);
 
@@ -168,7 +208,15 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
           ListFooterComponent={fullHasMore
             ? <Pressable accessibilityRole="button" disabled={fullLoadingMore} onPress={() => { if (fullCursor && !fullLoadingMore) void loadFull(fullCursor, true); }} style={styles.more}><Text style={styles.retry}>{fullLoadingMore ? '加载中…' : '加载更多评论'}</Text></Pressable>
             : rows.length ? <Text style={styles.footer}>已展示全部评论</Text> : undefined}
-          renderItem={({ item }) => <FullCommentRow item={item.item} depth={item.depth} loadingReplies={!!repliesBusy[item.item.id]} hasLoadedReplies={!!repliesOpen[item.item.id] && !!replies[item.item.id]} onToggleReplies={item.depth === 0 && item.item.replyCount > 0 ? () => { void toggleReplies(item.item); } : undefined} />} /></GestureDetector> : null}
+          renderItem={({ item }) => {
+            if (item.type === 'comment') {
+              const state = replyState[item.item.id];
+              return <FullCommentRow item={item.item} depth={0} loadingReplies={!!state?.loading} hasLoadedReplies={!!repliesOpen[item.item.id] && !!state?.items.length} onToggleReplies={item.item.replyCount > 0 ? () => toggleReplies(item.item) : undefined} />;
+            }
+            if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} />;
+            if (item.type === 'moreReplies') return <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true)} style={styles.replyMore}><Text style={styles.retry}>{item.loading ? '正在读取更多回复…' : '加载更多回复'}</Text></Pressable>;
+            return <Pressable accessibilityRole="button" onPress={() => void loadReplies(item.comment, '0', false)} style={styles.replyError}><Text style={styles.meta}>回复读取失败：{item.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>;
+          }} /></GestureDetector> : null}
       </>
       : <>
         {!current && refreshing && <ActivityIndicator color="#888" style={styles.loading} />}
@@ -190,6 +238,7 @@ const styles = StyleSheet.create({
   debug: { color: '#8b8b96', fontSize: 10, paddingHorizontal: 14, paddingBottom: 6, backgroundColor: '#20222e' },
   loginCta: { color: '#fc2f56', fontSize: 12, fontWeight: '600' },
   list: { padding: 16 }, loading: { padding: 28 }, error: { padding: 16, gap: 9, alignItems: 'center' }, more: { padding: 14, alignItems: 'center' },
+  replyMore: { paddingVertical: 8, paddingLeft: 42, alignItems: 'flex-start' }, replyError: { paddingVertical: 8, paddingLeft: 42, gap: 4, alignItems: 'flex-start' },
   row: { flexDirection: 'row', gap: 11, marginBottom: 25 }, replyRow: { marginBottom: 14, paddingLeft: 8 }, avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#2a2c3a' }, replyAvatar: { width: 26, height: 26, borderRadius: 13 }, body: { flex: 1, gap: 6 },
   name: { color: '#9a9aa5', fontSize: 12 }, text: { color: '#f2f2f5', fontSize: 15, lineHeight: 22 }, meta: { color: '#8b8b96', fontSize: 11 }, reply: { color: '#9a9aa5', fontSize: 12 }, likes: { color: '#9a9aa5', fontSize: 11, paddingTop: 2, maxWidth: 58 },
   attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, attachment: { width: 84, height: 84, borderRadius: 6, backgroundColor: '#2a2c3a' },
