@@ -6,6 +6,8 @@ import { useDouyinSession } from './douyin-session';
 // A danmaku item that is currently flying across the screen.
 type Flying = { key: string; text: string; top: number; x: Animated.Value; started: boolean };
 
+// Danmaku speed matches Douyin: measured ~0.1875 screen-widths/second on the
+// reference recording, i.e. 2 widths (width -> -width) in ~10.67s.
 // Overlay layer that pulls the video's time-based danmaku (danmaku/get_v2) once
 // the clip starts, then releases each bullet when the playhead reaches its
 // offset_time — like Douyin's bullet comments, laid out in horizontal lanes.
@@ -68,7 +70,7 @@ export function DanmakuOverlay({ workId, seconds, durationMs, playing, width, he
       const next = previous.map(item => {
         if (item.started) return item;
         changed = true;
-        Animated.timing(item.x, { toValue: -width, duration: 8500, useNativeDriver: true }).start(({ finished }) => {
+        Animated.timing(item.x, { toValue: -width, duration: 10670, useNativeDriver: true }).start(({ finished }) => {
           if (finished) setFlying(current => current.filter(x => x.key !== item.key));
         });
         return { ...item, started: true };

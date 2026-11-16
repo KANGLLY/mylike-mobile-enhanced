@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, createContext } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector, GestureStateManager, useNativeGesture, usePanGesture, useSimultaneousGestures } from 'react-native-gesture-handler';
@@ -9,12 +9,76 @@ import { mediaHeaders } from './douyin';
 import { parseCommentList, type FullComment } from './douyin-bridge';
 import { cachedGuestComments, fetchGuestCommentPreview, type GuestComment, type GuestCommentPreview } from './guest-comments';
 import { useDouyinSession } from './mobile/douyin-session';
+import { useMobile } from './mobile/context';
 
 function formatLikes(value: number): string {
   return value >= 10000 ? `${(value / 10000).toFixed(1)}万` : String(value);
 }
 
+// Two palettes for the comment sheet. The dark one is the original Douyin-like
+// look; the light one is a daytime variant the user can pick in Settings.
+const darkColors = {
+  sheetBg: '#0b0b0d', border: '#1e1e22', grip: '#333338',
+  title: '#f2f2f5', closeText: '#9a9aa0',
+  noticeBg: '#151310', noticeText: '#b99a5a',
+  noticeFullBg: '#0f1512', noticeFullText: '#6fbf8f',
+  debugBg: '#121316', debugText: '#7a7a82',
+  loginCta: '#ff4d5e',
+  replyEmpty: '#7a7a82', footerAction: '#9a9a9a', avatarBg: '#242429',
+  name: '#8b8b93', text: '#e9e9ec', meta: '#7a7a82', metaDot: '#5a5a62',
+  reply: '#9a9a9a', likeCount: '#8b8b93', likes: '#9a9a9a',
+  attachBg: '#242429', footer: '#6f6f78', retry: '#ff4d5e',
+  icon: '#9a9a9a', iconFaint: '#55555c', spinner: '#888888', green: '#3ddc84',
+};
+const lightColors = {
+  sheetBg: '#ffffff', border: '#e6e6ea', grip: '#cfcfd4',
+  title: '#17171a', closeText: '#8a8a90',
+  noticeBg: '#fff6e6', noticeText: '#8a6a2f',
+  noticeFullBg: '#e9f7ef', noticeFullText: '#2f8a5b',
+  debugBg: '#f2f2f5', debugText: '#8a8a90',
+  loginCta: '#e5344f',
+  replyEmpty: '#8a8a90', footerAction: '#6a6a72', avatarBg: '#e8e8ee',
+  name: '#5a5a62', text: '#1a1a1c', meta: '#8a8a90', metaDot: '#b5b5bc',
+  reply: '#7a7a82', likeCount: '#5a5a62', likes: '#8a8a90',
+  attachBg: '#e8e8ee', footer: '#9a9aa0', retry: '#e5344f',
+  icon: '#8a8a90', iconFaint: '#c2c2c8', spinner: '#999999', green: '#2f8a5b',
+};
+
+function makeStyles(c: typeof darkColors) {
+  return StyleSheet.create({
+    sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: c.sheetBg, borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: c.border },
+    header: { height: 56, alignItems: 'center', justifyContent: 'center' }, grip: { width: 32, height: 3, borderRadius: 2, backgroundColor: c.grip, position: 'absolute', top: 8 },
+    title: { color: c.title, fontWeight: '600', fontSize: 14 }, close: { position: 'absolute', right: 20, top: 14 }, closeText: { color: c.closeText, fontSize: 25 },
+    notice: { backgroundColor: c.noticeBg, paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeText: { color: c.noticeText, fontSize: 11, flex: 1 },
+    noticeFull: { backgroundColor: c.noticeFullBg, paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeFullText: { color: c.noticeFullText, fontSize: 11, flex: 1 },
+    debug: { color: c.debugText, fontSize: 10, paddingHorizontal: 14, paddingBottom: 6, backgroundColor: c.debugBg },
+    loginCta: { color: c.loginCta, fontSize: 12, fontWeight: '600' },
+    list: { padding: 14 }, loading: { padding: 28 }, error: { padding: 16, gap: 9, alignItems: 'center' }, more: { padding: 14, alignItems: 'center' },
+    replyError: { paddingVertical: 8, paddingLeft: 76, gap: 4, alignItems: 'flex-start' }, replyEmpty: { color: c.replyEmpty, fontSize: 12, paddingVertical: 8, paddingLeft: 76 },
+    replyFooter: { flexDirection: 'row', alignItems: 'center', gap: 24, paddingLeft: 76, paddingVertical: 10, marginBottom: 4 },
+    footerActionRow: { flexDirection: 'row', alignItems: 'center', gap: 2 }, footerAction: { color: c.footerAction, fontSize: 13 },
+    row: { flexDirection: 'row', gap: 10, marginBottom: 24, alignItems: 'flex-start' }, replyRow: { marginBottom: 12, paddingLeft: 46 },
+    avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: c.avatarBg }, replyAvatar: { width: 26, height: 26, borderRadius: 13 },
+    body: { flex: 1, gap: 5 },
+    name: { color: c.name, fontSize: 12.5 }, replyName: { fontSize: 11.5 },
+    text: { color: c.text, fontSize: 15, lineHeight: 22 }, replyText: { fontSize: 14, lineHeight: 20 },
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 }, meta: { color: c.meta, fontSize: 11 }, metaDot: { color: c.metaDot, fontSize: 11 },
+    reply: { color: c.reply, fontSize: 12 }, expandReplies: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+    actions: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingTop: 2 }, likeCol: { alignItems: 'center', minWidth: 26 }, likeCount: { color: c.likeCount, fontSize: 10.5, marginTop: 1 }, dislike: {},
+    likes: { color: c.likes, fontSize: 11, paddingTop: 2, maxWidth: 58 },
+    attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, attachment: { width: 84, height: 84, borderRadius: 6, backgroundColor: c.attachBg },
+    footer: { color: c.footer, textAlign: 'center', fontSize: 12, padding: 12 }, retry: { color: c.retry, fontSize: 12 },
+  });
+}
+
+type CommentThemeValue = { light: boolean; C: typeof darkColors; styles: ReturnType<typeof makeStyles> };
+const darkTheme: CommentThemeValue = { light: false, C: darkColors, styles: makeStyles(darkColors) };
+const lightTheme: CommentThemeValue = { light: true, C: lightColors, styles: makeStyles(lightColors) };
+const ThemeCtx = createContext<CommentThemeValue>(darkTheme);
+const useCommentTheme = () => useContext(ThemeCtx);
+
 const GuestCommentRow = memo(function GuestCommentRow({ item }: { item: GuestComment }) {
+  const { styles } = useCommentTheme();
   const [failed, setFailed] = useState(false); const [expanded, setExpanded] = useState(false);
   useEffect(() => { setFailed(false); }, [item.avatar]);
   const meta = [item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '', item.region].filter(Boolean).join(' · ');
@@ -31,6 +95,7 @@ const GuestCommentRow = memo(function GuestCommentRow({ item }: { item: GuestCom
 const FullCommentRow = memo(function FullCommentRow({ item, depth, repliesOpen, onToggleReplies, loadingReplies }: {
   item: FullComment; depth: number; repliesOpen?: boolean; onToggleReplies?: () => void; loadingReplies?: boolean;
 }) {
+  const { styles, C } = useCommentTheme();
   const [failed, setFailed] = useState(false); const [expanded, setExpanded] = useState(false);
   useEffect(() => { setFailed(false); }, [item.avatar]);
   const meta = [item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '', item.region].filter(Boolean).join(' · ');
@@ -46,14 +111,14 @@ const FullCommentRow = memo(function FullCommentRow({ item, depth, repliesOpen, 
         {depth === 0 && <Text style={styles.metaDot}>·</Text>}
         {depth === 0 && <Text style={styles.reply}>回复</Text>}
       </View>
-      {item.replyCount > 0 && depth === 0 && onToggleReplies && !repliesOpen && <Pressable accessibilityRole="button" onPress={onToggleReplies} hitSlop={5} style={styles.expandReplies}><Text style={styles.reply}>{loadingReplies ? '正在读取回复…' : `展开 ${item.replyCount} 条回复`}</Text><Ionicons name="chevron-down" size={13} color="#9a9a9a" /></Pressable>}
+      {item.replyCount > 0 && depth === 0 && onToggleReplies && !repliesOpen && <Pressable accessibilityRole="button" onPress={onToggleReplies} hitSlop={5} style={styles.expandReplies}><Text style={styles.reply}>{loadingReplies ? '正在读取回复…' : `展开 ${item.replyCount} 条回复`}</Text><Ionicons name="chevron-down" size={13} color={C.icon} /></Pressable>}
     </View>
     <View style={styles.actions}>
       <View style={styles.likeCol}>
-        <Ionicons name="heart-outline" size={16} color="#9a9a9a" />
+        <Ionicons name="heart-outline" size={16} color={C.icon} />
         {item.likes !== null && <Text style={styles.likeCount}>{formatLikes(item.likes)}</Text>}
       </View>
-      <Ionicons name="heart-dislike-outline" size={16} color="#55555c" style={styles.dislike} />
+      <Ionicons name="heart-dislike-outline" size={16} color={C.iconFaint} style={styles.dislike} />
     </View>
   </View>;
 });
@@ -72,6 +137,9 @@ type ReplyState = { items: FullComment[]; cursor: string | null; hasMore: boolea
 export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
   const insets = useSafeAreaInsets();
   const { request, loggedIn, openLogin, checkLogin, loginDebug } = useDouyinSession();
+  const { preferences } = useMobile();
+  const theme = preferences.commentTheme === 'light' ? lightTheme : darkTheme;
+  const { styles, C } = theme;
   const [result, setResult] = useState<GuestCommentPreview | null>(() => cachedGuestComments(workId));
   const [error, setError] = useState(''); const [refreshing, setRefreshing] = useState(false); const [attempt, setAttempt] = useState(0);
   const [fullComments, setFullComments] = useState<FullComment[]>([]); const [fullCursor, setFullCursor] = useState<string | null>(null);
@@ -212,15 +280,15 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
   const retry = () => { if (!refreshing) setAttempt(value => value + 1); };
   const retryFull = () => { if (!fullLoading) void loadFull(fullComments.length ? (fullCursor ?? '0') : '0', false); };
-  return <Animated.View accessibilityViewIsModal style={[styles.sheet, { height }, style]}>
+  return <ThemeCtx.Provider value={theme}><Animated.View accessibilityViewIsModal style={[styles.sheet, { height }, style]}>
     <GestureDetector gesture={pan}><View style={styles.header}><View style={styles.grip} /><Text style={styles.title}>{loggedIn ? `评论 · ${fullComments.length} 条` : `评论预览${current ? ` · ${current.items.length} 条` : ''}`}</Text><Pressable accessibilityLabel="关闭评论" onPress={close} hitSlop={15} style={styles.close}><Text style={styles.closeText}>×</Text></Pressable></View></GestureDetector>
     {loggedIn
-      ? <View style={styles.noticeFull}><Text style={styles.noticeFullText}>已登录 · 完整评论，支持翻页和楼中楼回复</Text>{fullLoading && <ActivityIndicator size="small" color="#3ddc84" />}</View>
+      ? <View style={styles.noticeFull}><Text style={styles.noticeFullText}>已登录 · 完整评论，支持翻页和楼中楼回复</Text>{fullLoading && <ActivityIndicator size="small" color={C.green} />}</View>
       : <View style={styles.notice}><Text style={styles.noticeText}>游客有限预览 · 登录后可看完整评论和回复</Text><Pressable accessibilityRole="button" accessibilityLabel="登录抖音" onPress={openLogin} hitSlop={8}><Text style={styles.loginCta}>登录</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="刷新评论预览" disabled={refreshing} onPress={retry} hitSlop={8}><Text style={styles.retry}>{refreshing ? '读取中' : '刷新'}</Text></Pressable></View>}
     {!loggedIn && loginDebug ? <Text style={styles.debug}>{loginDebug}</Text> : null}
     {loggedIn
       ? <>
-        {fullLoading && !fullComments.length && <ActivityIndicator color="#888" style={styles.loading} />}
+        {fullLoading && !fullComments.length && <ActivityIndicator color={C.spinner} style={styles.loading} />}
         {!!fullError && <Pressable onPress={retryFull} style={styles.error}><Text style={styles.meta}>{fullError}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
         {!fullLoading || fullComments.length > 0 ? <GestureDetector gesture={listGesture}><Animated.FlatList data={rows} keyExtractor={row => row.key} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
           initialNumToRender={10} maxToRenderPerBatch={8} windowSize={5} scrollEnabled={!dragging} onScroll={scroll} scrollEventThrottle={16} bounces={false} overScrollMode="never"
@@ -235,15 +303,15 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
             }
             if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} />;
             if (item.type === 'replyFooter') return <View style={styles.replyFooter}>
-              {item.hasMore ? <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true, 10)} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>{item.loading ? '正在读取更多…' : '展开更多'}</Text><Ionicons name="chevron-down" size={13} color="#9a9a9a" /></Pressable> : null}
-              <Pressable accessibilityRole="button" onPress={() => setRepliesOpen(previous => ({ ...previous, [item.comment.id]: false }))} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>收起</Text><Ionicons name="chevron-up" size={13} color="#9a9a9a" /></Pressable>
+              {item.hasMore ? <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true, 10)} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>{item.loading ? '正在读取更多…' : '展开更多'}</Text><Ionicons name="chevron-down" size={13} color={C.icon} /></Pressable> : null}
+              <Pressable accessibilityRole="button" onPress={() => setRepliesOpen(previous => ({ ...previous, [item.comment.id]: false }))} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>收起</Text><Ionicons name="chevron-up" size={13} color={C.icon} /></Pressable>
             </View>;
             if (item.type === 'replyEmpty') return <Text style={styles.replyEmpty}>暂无回复</Text>;
             return <Pressable accessibilityRole="button" onPress={() => void loadReplies(item.comment, '0', false, 3)} style={styles.replyError}><Text style={styles.meta}>回复读取失败：{item.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>;
           }} /></GestureDetector> : null}
       </>
       : <>
-        {!current && refreshing && <ActivityIndicator color="#888" style={styles.loading} />}
+        {!current && refreshing && <ActivityIndicator color={C.spinner} style={styles.loading} />}
         {!!error && <Pressable onPress={retry} style={styles.error}><Text style={styles.meta}>{error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
         {current && <GestureDetector gesture={listGesture}><Animated.FlatList data={current.items} keyExtractor={item => item.id} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
           initialNumToRender={10} maxToRenderPerBatch={8} windowSize={5} scrollEnabled={!dragging} onScroll={scroll} scrollEventThrottle={16} bounces={false} overScrollMode="never"
@@ -251,29 +319,5 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
           ListFooterComponent={current.items.length ? <Text style={styles.footer}>仅展示游客可读取的预览，登录后可看全部评论。</Text> : undefined}
           renderItem={({ item }) => <GuestCommentRow item={item} />} /></GestureDetector>}
       </>}
-  </Animated.View>;
+  </Animated.View></ThemeCtx.Provider>;
 }
-const styles = StyleSheet.create({
-  sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#0b0b0d', borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#1e1e22' },
-  header: { height: 56, alignItems: 'center', justifyContent: 'center' }, grip: { width: 32, height: 3, borderRadius: 2, backgroundColor: '#333338', position: 'absolute', top: 8 },
-  title: { color: '#f2f2f5', fontWeight: '600', fontSize: 14 }, close: { position: 'absolute', right: 20, top: 14 }, closeText: { color: '#9a9aa0', fontSize: 25 },
-  notice: { backgroundColor: '#151310', paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeText: { color: '#b99a5a', fontSize: 11, flex: 1 },
-  noticeFull: { backgroundColor: '#0f1512', paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeFullText: { color: '#6fbf8f', fontSize: 11, flex: 1 },
-  debug: { color: '#7a7a82', fontSize: 10, paddingHorizontal: 14, paddingBottom: 6, backgroundColor: '#121316' },
-  loginCta: { color: '#ff4d5e', fontSize: 12, fontWeight: '600' },
-  list: { padding: 14 }, loading: { padding: 28 }, error: { padding: 16, gap: 9, alignItems: 'center' }, more: { padding: 14, alignItems: 'center' },
-  replyError: { paddingVertical: 8, paddingLeft: 76, gap: 4, alignItems: 'flex-start' }, replyEmpty: { color: '#7a7a82', fontSize: 12, paddingVertical: 8, paddingLeft: 76 },
-  replyFooter: { flexDirection: 'row', alignItems: 'center', gap: 24, paddingLeft: 76, paddingVertical: 10, marginBottom: 4 },
-  footerActionRow: { flexDirection: 'row', alignItems: 'center', gap: 2 }, footerAction: { color: '#9a9a9a', fontSize: 13 },
-  row: { flexDirection: 'row', gap: 10, marginBottom: 24, alignItems: 'flex-start' }, replyRow: { marginBottom: 12, paddingLeft: 46 },
-  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#242429' }, replyAvatar: { width: 26, height: 26, borderRadius: 13 },
-  body: { flex: 1, gap: 5 },
-  name: { color: '#8b8b93', fontSize: 12.5 }, replyName: { fontSize: 11.5 },
-  text: { color: '#e9e9ec', fontSize: 15, lineHeight: 22 }, replyText: { fontSize: 14, lineHeight: 20 },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 }, meta: { color: '#7a7a82', fontSize: 11 }, metaDot: { color: '#5a5a62', fontSize: 11 },
-  reply: { color: '#9a9a9a', fontSize: 12 }, expandReplies: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
-  actions: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingTop: 2 }, likeCol: { alignItems: 'center', minWidth: 26 }, likeCount: { color: '#8b8b93', fontSize: 10.5, marginTop: 1 }, dislike: {},
-  likes: { color: '#9a9a9a', fontSize: 11, paddingTop: 2, maxWidth: 58 },
-  attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, attachment: { width: 84, height: 84, borderRadius: 6, backgroundColor: '#242429' },
-  footer: { color: '#6f6f78', textAlign: 'center', fontSize: 12, padding: 12 }, retry: { color: '#ff4d5e', fontSize: 12 },
-});

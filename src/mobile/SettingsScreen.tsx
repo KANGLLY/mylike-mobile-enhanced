@@ -13,7 +13,7 @@ function Row({ title, detail, children, onPress, disabled = false, danger = fals
   return onPress ? <Pressable accessibilityRole="button" disabled={disabled} onPress={onPress} style={[styles.row, disabled && { opacity: 0.5 }]}>{content}</Pressable> : <View style={styles.row}>{content}</View>;
 }
 export function SettingsScreen({ onBack }: { onBack: () => void }) {
-  const { clear, store, nickname, changed } = useMobile();
+  const { clear, store, nickname, changed, preferences, setPreferences } = useMobile();
   const [busy, setBusy] = useState(false); const [inspecting, setInspecting] = useState(true); const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState(''); const [dataError, setDataError] = useState(''); const [notice, setNotice] = useState('');
   const alive = useRef(true); const operation = useRef(false); const generation = useRef(0);
@@ -48,6 +48,12 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
       <Row title="清空内容库" detail="仅影响当前账号，清空前会再次确认。" danger disabled={busy} onPress={() => confirm('library')} />
       <Row title="清理缓存" detail="所有账号共用的临时缓存；保留内容、标记和进度。" disabled={busy} onPress={() => { void action(async () => { const result = clearPlaybackCache(); return result.failed ? `缓存已清理；${result.failed} 个临时文件暂不可删除，可稍后重试。` : '缓存已清理'; }); }}><Text style={ui.muted}>{usage ? bytesLabel(usage.cache.bytes) : '—'}</Text></Row>
       {!!dataError && <Row title={inspecting ? '正在读取…' : '重新检查数据占用'} disabled={busy || inspecting} onPress={() => { void inspect(); }} />}
+    </Section>
+    <Section title="外观">
+      <Row title="评论区背景" detail={preferences.commentTheme === 'light' ? '浅色（白天模式）' : '深色（夜间模式）'} onPress={() => { void setPreferences({ commentTheme: preferences.commentTheme === 'light' ? 'dark' : 'light' }); }}>
+        <Text style={ui.text}>{preferences.commentTheme === 'light' ? '浅色' : '深色'}</Text>
+        <Ionicons name="swap-horizontal" size={18} color="#8a8f9a" style={{ marginLeft: 8 }} />
+      </Row>
     </Section>
   </ScrollView>
     {!!(busy || notice || error || dataError) && <View pointerEvents="none" style={styles.feedback}><Text accessibilityLiveRegion="polite" style={[styles.notice, !!(error || dataError) && { color: '#ffc0cc' }]}>{busy ? '处理中…' : error || dataError || notice}</Text></View>}
