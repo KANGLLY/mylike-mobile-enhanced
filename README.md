@@ -17,6 +17,7 @@
 
 > **声明：** 本仓库为基于 [Hannah2227/MyLike](https://github.com/Hannah2227/mylike-mobile)（MIT，Copyright © 2026 MyLike）的修改版（非官方 / unofficial）。
 > 原作品版权归原作者所有；本版遵循 MIT 许可证，详见仓库 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
+> 部分评论 / 点赞 / 收藏 / 弹幕的请求与解析逻辑参考并移植自同作者桌面端项目 [Hannah2227/douyin-favorite-MyLike](https://github.com/Hannah2227/douyin-favorite-MyLike)（MIT）；`a_bogus` 签名算法来自第三方逆向研究项目，版权归原出处，仅供学习研究。
 
 ## 界面预览
 

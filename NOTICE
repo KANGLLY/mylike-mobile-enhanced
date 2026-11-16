@@ -17,3 +17,10 @@ MyLike（增强版）— 来源与许可声明
 - 长按二倍速；横向视频「全屏观看」；可开关弹幕
 - 保存视频 / 图片 / 音频到手机相册
 - 默认爱心桌面图标
+
+参考与第三方说明
+- 部分评论 / 点赞 / 收藏 / 弹幕的请求与解析逻辑，参考并移植自同作者桌面端项目
+  Hannah2227/douyin-favorite-MyLike（MIT，Copyright © 2026 MyLike）：
+  https://github.com/Hannah2227/douyin-favorite-MyLike
+- a_bogus 签名算法代码来自第三方逆向研究项目（如 alphaply/DouyinComments 等），
+  版权归原出处，仅用于学习研究；抖音相关接口为未获官方授权的逆向接口。
