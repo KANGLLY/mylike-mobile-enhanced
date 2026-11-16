@@ -83,3 +83,51 @@ test('a page-side exception is reported as SCRIPT_ERROR with its message', async
   equal(message.error, 'SCRIPT_ERROR');
   ok(String(message.message).includes('boom-fetch'));
 });
+
+test('likes reads use a GET with count and msToken on the favorite endpoint', async () => {
+  const script = buildBridgeScript({ id: 'r3', operation: 'likes', parameters: { cursor: '0', count: '20' }, timeout: 5_000 });
+  const captured: string[] = [];
+  let requestedUrl = '';
+  const context = {
+    window: { ReactNativeWebView: { postMessage: (value: string) => captured.push(value) } },
+    navigator: {
+      language: 'zh-CN', platform: 'Win32', onLine: true, hardwareConcurrency: 8,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    },
+    document: { cookie: 'msToken=tok' },
+    screen: { width: 1280, height: 800 },
+    URLSearchParams, AbortController, setTimeout, clearTimeout,
+    fetch: (url: string) => { requestedUrl = url; return Promise.resolve({ status: 200, text: () => Promise.resolve('{"status_code":0,"has_more":0,"aweme_list":[]}') }); },
+  };
+  runInNewContext(script, context, { timeout: 2_000 });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  equal(captured.length, 1);
+  ok(requestedUrl.startsWith('https://www.douyin.com/aweme/v1/web/aweme/favorite/?'), 'hits the likes endpoint');
+  ok(requestedUrl.includes('count=20'));
+  ok(requestedUrl.includes('msToken=tok'));
+});
+
+test('favourites reads POST cursor/count with the csrf downgrade header', async () => {
+  const script = buildBridgeScript({ id: 'r4', operation: 'favorites', parameters: { cursor: '0', count: '20' }, timeout: 5_000 });
+  const captured: string[] = [];
+  let requestedUrl = ''; let init: any = null;
+  const context = {
+    window: { ReactNativeWebView: { postMessage: (value: string) => captured.push(value) } },
+    navigator: {
+      language: 'zh-CN', platform: 'Win32', onLine: true, hardwareConcurrency: 8,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    },
+    document: { cookie: 'msToken=tok' },
+    screen: { width: 1280, height: 800 },
+    URLSearchParams, AbortController, setTimeout, clearTimeout,
+    fetch: (url: string, options: any) => { requestedUrl = url; init = options; return Promise.resolve({ status: 200, text: () => Promise.resolve('{"status_code":0,"has_more":0,"aweme_list":[]}') }); },
+  };
+  runInNewContext(script, context, { timeout: 2_000 });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  equal(captured.length, 1);
+  ok(requestedUrl.startsWith('https://www.douyin.com/aweme/v1/web/aweme/listcollection/?'), 'hits the favourites endpoint');
+  ok(requestedUrl.includes('publish_video_strategy_type=2'));
+  equal(init.method, 'POST');
+  equal(init.headers['x-secsdk-csrf-token'], 'DOWNGRADE');
+  equal(init.body, 'cursor=0&count=20');
+});

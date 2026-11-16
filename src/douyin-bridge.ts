@@ -76,6 +76,30 @@ function safeJson(body: string): unknown {
     (token, digits: string | undefined) => digits ? token.replace(digits, `"${digits}"`) : token,
   ));
 }
+// Some guest endpoints (e.g. the mobile reply list) append a second JSON log
+// object after the payload. Return only the first balanced {...} object so
+// JSON.parse never sees the trailing blob.
+function trimToFirstJson(body: string): string {
+  const start = body.indexOf('{');
+  if (start < 0) return body;
+  let depth = 0, inString = false, escaped = false;
+  for (let i = start; i < body.length; i += 1) {
+    const ch = body[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return body.slice(start, i + 1);
+    }
+  }
+  return body.slice(start);
+}
 function statusCodeOf(payload: Record<string, unknown>): string {
   const raw = payload.status_code;
   const nested = record(raw)?.StatusCode ?? raw;
@@ -104,7 +128,7 @@ export function parseCommentList(body: string, workId: string, requestedCursor: 
   if (!body.trim()) throw new CommentReadError('empty', '平台返回空响应，未能确认评论列表。');
 
   let payload: Record<string, unknown> | undefined;
-  try { payload = record(safeJson(body)); } catch { throw new CommentReadError('invalid', '评论响应不是有效 JSON。'); }
+  try { payload = record(safeJson(trimToFirstJson(body))); } catch { throw new CommentReadError('invalid', '评论响应不是有效 JSON。'); }
   if (!payload) throw new CommentReadError('invalid', '评论响应结构无效。');
 
   const code = statusCodeOf(payload);
@@ -145,9 +169,13 @@ export function parseCommentList(body: string, workId: string, requestedCursor: 
 
   let nextCursor: string | null = null;
   if (more) {
-    const cursor = numericId(payload.cursor);
-    if (/^0+$/.test(cursor)) throw new CommentReadError('invalid', '分页游标异常。');
-    nextCursor = cursor;
+    // The mobile reply endpoint may omit an explicit cursor; only continue when
+    // the platform gives us a usable numeric one.
+    const raw = payload.cursor ?? payload.max_cursor;
+    try {
+      const cursor = numericId(raw);
+      if (!/^0+$/.test(cursor)) nextCursor = cursor;
+    } catch { nextCursor = null; }
   }
   if (nextCursor !== null && nextCursor === requestedCursor) throw new CommentReadError('stalled', '评论分页没有推进，请重试。');
   return { items, nextCursor, hasMore: more };
@@ -167,9 +195,100 @@ export function parseSelf(body: string, httpStatus = 200): { loggedIn: boolean; 
   return { loggedIn: true, nickname: text(user.nickname) || undefined };
 }
 
+// ---------------------------------------------------------------- video lists
+
+export type VideoKind = 'video' | 'gallery' | 'live-gallery';
+export type VideoItem = {
+  id: string;
+  title: string;
+  author: string;
+  coverUrl: string | null;
+  publishedAt: number | null;
+  kind: VideoKind;
+};
+export type VideoPage = { items: VideoItem[]; nextCursor: string | null; hasMore: boolean };
+
+const COVER_HOSTS = [
+  'douyinpic.com', 'douyincdn.com', 'douyinstatic.com', 'byteimg.com', 'ibytedtos.com', 'bytecdn.cn', 'pstatp.com',
+];
+function coverUrl(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  for (const entry of value) {
+    if (typeof entry !== 'string') continue;
+    try {
+      const url = new URL(entry);
+      if (url.protocol !== 'https:' || url.username || url.password || url.port) continue;
+      if (COVER_HOSTS.some(host => url.hostname === host || url.hostname.endsWith('.' + host))) return entry;
+    } catch { /* ignore malformed cover URL */ }
+  }
+  return null;
+}
+function awemeToItem(value: unknown): VideoItem | null {
+  const row = record(value);
+  if (!row) return null;
+  let id: string;
+  try { id = numericId(row.aweme_id); } catch { return null; }
+  if (/^0+$/.test(id)) return null;
+  const video = record(row.video);
+  const author = record(row.author);
+  const images = Array.isArray(row.images) ? row.images : [];
+  const cover =
+    coverUrl(record(video?.cover)?.url_list)
+    ?? coverUrl(record(video?.origin_cover)?.url_list)
+    ?? coverUrl(record(images[0])?.url_list);
+  const rawTime = count(row.create_time);
+  return {
+    id,
+    title: truncate(text(row.desc), 500),
+    author: truncate(text(author?.nickname), 200) || '抖音用户',
+    coverUrl: cover,
+    publishedAt: rawTime > 0 ? (rawTime < 1e11 ? rawTime * 1000 : rawTime) : null,
+    kind: images.length ? 'gallery' : 'video',
+  };
+}
+
+// Parse a liked-videos page (`/aweme/v1/web/aweme/favorite/`) or a favorites
+// collection page (`/aweme/v1/web/aweme/listcollection/`). Both expose
+// `aweme_list`, `has_more`, and a `max_cursor`/`cursor`.
+export function parseVideoList(body: string, requestedCursor: string, httpStatus = 200): VideoPage {
+  if (httpStatus === 401 || httpStatus === 403) throw new CommentReadError('auth', '登录状态已失效，请重新登录抖音。');
+  if (httpStatus === 429) throw new CommentReadError('restricted', '请求过于频繁，请稍后再试。');
+  if (httpStatus < 200 || httpStatus >= 300) throw new CommentReadError('network', `列表请求失败（HTTP ${httpStatus}）。`);
+  if (/<(?:html|!doctype)/i.test(body.slice(0, 500))) throw new CommentReadError('restricted', '接口返回了网页，请重新登录或稍后再试。');
+  if (!body.trim()) throw new CommentReadError('empty', '平台返回空响应，未能确认列表。');
+
+  let payload: Record<string, unknown> | undefined;
+  try { payload = record(safeJson(trimToFirstJson(body))); } catch { throw new CommentReadError('invalid', '列表响应不是有效 JSON。'); }
+  if (!payload) throw new CommentReadError('invalid', '列表响应结构无效。');
+  const code = statusCodeOf(payload);
+  if (code !== '' && code !== '0') throw new CommentReadError('restricted', '未能读取列表，请重新登录后重试。');
+
+  const more = [1, true, '1'].includes(payload.has_more as never);
+  if (!more && ![0, false, '0'].includes(payload.has_more as never)) throw new CommentReadError('invalid', '列表结构异常。');
+  const rows = payload.aweme_list === null && !more ? [] : payload.aweme_list;
+  if (!Array.isArray(rows)) throw new CommentReadError('invalid', '列表结构异常。');
+
+  const items: VideoItem[] = [];
+  const seen = new Set<string>();
+  for (const raw of rows) {
+    const item = awemeToItem(raw);
+    if (item && !seen.has(item.id)) { seen.add(item.id); items.push(item); }
+  }
+
+  let nextCursor: string | null = null;
+  if (more) {
+    try {
+      const cursor = numericId(payload.max_cursor ?? payload.cursor);
+      if (!/^0+$/.test(cursor)) nextCursor = cursor;
+    } catch { nextCursor = null; }
+  }
+  if (nextCursor !== null && nextCursor === requestedCursor) throw new CommentReadError('stalled', '列表分页没有推进，请重试。');
+  return { items, nextCursor, hasMore: more };
+}
+
 // ---------------------------------------------------------------- page bridge
 
-export type BridgeOperation = 'comments' | 'commentReplies' | 'self';
+export type BridgeOperation = 'comments' | 'commentReplies' | 'self' | 'likes' | 'favorites';
 export type BridgeRequest = { id: string; operation: BridgeOperation; parameters: Record<string, string>; timeout: number };
 export type BridgeResult = { id: string; status: number; body: string; error?: string; message?: string };
 
@@ -180,23 +299,19 @@ export type BridgeResult = { id: string; status: number; body: string; error?: s
 // string survives the bundle verbatim and stays fully self-contained in the page.
 // It is written with no backslash escapes so it can live in a template literal.
 const PAGE_SCRIPT = [
-  "var PATHS={self:'/aweme/v1/web/user/profile/self/',comments:'/aweme/v1/web/comment/list/',commentReplies:'/aweme/v1/web/comment/list/reply/'};",
+  "var PATHS={self:'/aweme/v1/web/user/profile/self/',comments:'/aweme/v1/web/comment/list/',commentReplies:'/aweme/v1/web/comment/list/reply/',likes:'/aweme/v1/web/aweme/favorite/',favorites:'/aweme/v1/web/aweme/listcollection/'};",
+  "function mylikeToken(params){var parts=(document.cookie||'').split(';');var tk='';for(var c=0;c<parts.length;c++){var seg=parts[c];while(seg.charAt(0)===' '){seg=seg.substring(1);}if(seg.indexOf('msToken=')===0){tk=seg.substring(8);break;}}if(tk){try{tk=decodeURIComponent(tk);}catch(_e){}params.set('msToken',tk);}}",
+  "function mylikeFp(params){params.set('pc_client_type','1');params.set('browser_language',navigator.language||'');params.set('browser_platform',navigator.platform||'');params.set('browser_online',String(navigator.onLine));if(navigator.hardwareConcurrency){params.set('cpu_core_num',String(navigator.hardwareConcurrency));}var ua=navigator.userAgent||'';var ci=ua.indexOf('Chrome/');var chrome='';if(ci>=0){var mm=ua.substring(ci+7).match(/^[0-9.]+/);if(mm){chrome=mm[0];}}if(chrome){params.set('browser_name','Chrome');params.set('browser_version',chrome);params.set('engine_name','Blink');params.set('engine_version',chrome);}var os='';if(ua.indexOf('Windows')>=0){os='Windows';}else if(ua.indexOf('Macintosh')>=0){os='Mac OS';}else if(ua.indexOf('Linux')>=0){os='Linux';}if(os){params.set('os_name',os);}if(typeof screen!=='undefined'){params.set('screen_width',String(screen.width));params.set('screen_height',String(screen.height));}}",
   "function mylikeRequest(request){return new Promise(function(resolve){try{",
+  "var op=request.operation;var p=request.parameters||{};var keys=Object.keys(p);var i;",
   "var params=new URLSearchParams({device_platform:'webapp',aid:'6383',channel:'channel_pc_web',version_code:'290100',version_name:'29.1.0',update_version_code:'170400',cookie_enabled:'true',platform:'PC'});",
-  "var p=request.parameters||{};var keys=Object.keys(p);for(var i=0;i<keys.length;i++){params.set(keys[i],p[keys[i]]);}",
-  "var commentRead=request.operation==='comments'||request.operation==='commentReplies';var referrer;",
-  "if(commentRead){if(!params.has('count')){params.set('count','20');}params.set('pc_client_type','1');",
-  "params.set('browser_language',navigator.language||'');params.set('browser_platform',navigator.platform||'');params.set('browser_online',String(navigator.onLine));",
-  "if(navigator.hardwareConcurrency){params.set('cpu_core_num',String(navigator.hardwareConcurrency));}",
-  "var ua=navigator.userAgent||'';var ci=ua.indexOf('Chrome/');var chrome='';if(ci>=0){var mm=ua.substring(ci+7).match(/^[0-9.]+/);if(mm){chrome=mm[0];}}",
-  "if(chrome){params.set('browser_name','Chrome');params.set('browser_version',chrome);params.set('engine_name','Blink');params.set('engine_version',chrome);}",
-  "var os='';if(ua.indexOf('Windows')>=0){os='Windows';}else if(ua.indexOf('Macintosh')>=0){os='Mac OS';}else if(ua.indexOf('Linux')>=0){os='Linux';}if(os){params.set('os_name',os);}",
-  "if(typeof screen!=='undefined'){params.set('screen_width',String(screen.width));params.set('screen_height',String(screen.height));}",
-  "var parts=(document.cookie||'').split(';');var tk='';for(var c=0;c<parts.length;c++){var seg=parts[c];while(seg.charAt(0)===' '){seg=seg.substring(1);}if(seg.indexOf('msToken=')===0){tk=seg.substring(8);break;}}if(tk){try{tk=decodeURIComponent(tk);}catch(_e){}params.set('msToken',tk);}",
-  "referrer='https://www.douyin.com/video/'+(p.aweme_id||p.item_id||'');}",
+  "var method='GET';var body=null;var referrer='';var headers={accept:'application/json, text/plain, */*'};var href;",
+  "if(op==='favorites'){mylikeFp(params);params.set('pc_libra_divert','Windows');params.set('publish_video_strategy_type','2');mylikeToken(params);referrer='https://www.douyin.com/user/self?from_tab_name=main&showTab=favorite_collection';method='POST';headers['content-type']='application/x-www-form-urlencoded;charset=UTF-8';headers['x-secsdk-csrf-token']='DOWNGRADE';body=new URLSearchParams({cursor:p.cursor||'0',count:p.count||'20'}).toString();}",
+  "else{for(i=0;i<keys.length;i++){params.set(keys[i],p[keys[i]]);}if(op==='comments'){if(!params.has('count')){params.set('count','20');}mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.aweme_id||p.item_id||'');}else if(op==='likes'){mylikeToken(params);}}",
+  "href='https://www.douyin.com'+PATHS[op]+'?'+params.toString();",
   "var controller=new AbortController();var timer=setTimeout(function(){try{controller.abort();}catch(_e){}},request.timeout||15000);",
-  "var opts={credentials:'include',cache:'no-store',signal:controller.signal,method:'GET',headers:{accept:'application/json, text/plain, */*'}};if(referrer){opts.referrer=referrer;}",
-  "fetch('https://www.douyin.com'+PATHS[request.operation]+'?'+params.toString(),opts).then(function(resp){return resp.text().then(function(body){clearTimeout(timer);resolve({id:request.id,status:resp.status,body:body});});}).catch(function(err){clearTimeout(timer);var aborted=err&&err.name==='AbortError';resolve({id:request.id,status:0,body:'',error:aborted?'TIMEOUT':'NETWORK_ERROR'});});",
+  "var opts={credentials:'include',cache:'no-store',signal:controller.signal,method:method,headers:headers};if(referrer){opts.referrer=referrer;}if(body){opts.body=body;}",
+  "fetch(href,opts).then(function(resp){return resp.text().then(function(txt){clearTimeout(timer);resolve({id:request.id,status:resp.status,body:txt});});}).catch(function(err){clearTimeout(timer);var aborted=err&&err.name==='AbortError';resolve({id:request.id,status:0,body:'',error:aborted?'TIMEOUT':'NETWORK_ERROR'});});",
   "}catch(e){resolve({id:request.id,status:0,body:'',error:'SCRIPT_ERROR',message:String(e&&e.message?e.message:e)});}});}",
 ].join('\n');
 

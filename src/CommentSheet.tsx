@@ -7,6 +7,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { mediaHeaders } from './douyin';
 import { parseCommentList, type FullComment } from './douyin-bridge';
 import { cachedGuestComments, fetchGuestCommentPreview, type GuestComment, type GuestCommentPreview } from './guest-comments';
+import { fetchGuestReplies } from './mobile/guest-replies';
 import { useDouyinSession } from './mobile/douyin-session';
 
 const GuestCommentRow = memo(function GuestCommentRow({ item }: { item: GuestComment }) {
@@ -104,11 +105,9 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
       return { ...previous, [comment.id]: { ...base, loading: true, error: '' } };
     });
     try {
-      // item_id + comment_id + item_type is exactly what the desktop app uses.
-      const response = await request('commentReplies', {
-        cursor, count: '20', item_type: '0', item_id: workId, comment_id: comment.id,
-      });
-      const page = parseCommentList(response.body, workId, cursor, response.status);
+      // Read replies from the public mobile endpoint via a native fetch — no
+      // page signature needed and no CORS, so it never hangs like the web route.
+      const page = await fetchGuestReplies(workId, comment.id, cursor);
       setReplyState(previous => {
         const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, error: '', loading: false } as ReplyState;
         const seen = new Set(base.items.map(item => item.id));
