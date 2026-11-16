@@ -1,44 +1,14 @@
-import { parseSelf, parseVideoList, CommentReadError, type VideoItem } from '../douyin-bridge.ts';
+import { parseVideoItems, CommentReadError, type VideoItem } from '../douyin-bridge.ts';
 import type { LibraryImport, LibraryWork } from '../library-format.ts';
 
-// Pull the signed-in account's liked videos and favourites collection straight
-// from the web endpoints (through the shared login WebView) and merge them into
-// the local library, exactly like importing a desktop export — but live.
-//
-// The likes endpoint is the one that trips people up: it needs the profile's
-// sec_user_id and paginates on `max_cursor` (see the desktop collector), NOT on
-// `cursor`. Favourites uses `cursor`. So we read the identity first and drive
-// each list with the right param names.
-type Requester = (operation: 'self' | 'likes' | 'favorites', parameters: Record<string, string>) => Promise<{ status: number; body: string }>;
-
-const PAGE_LIMIT = 300;
-
-async function resolveSecUid(request: Requester): Promise<string> {
-  const response = await request('self', {});
-  const self = parseSelf(response.body, response.status);
-  if (!self.loggedIn) throw new CommentReadError('auth', '登录状态已失效，请重新登录抖音。');
-  if (!self.secUid) throw new CommentReadError('auth', '没有取到账号 ID，请重新登录抖音后重试。');
-  return self.secUid;
-}
-
-async function collectAll(request: Requester, operation: 'likes' | 'favorites', secUid: string): Promise<VideoItem[]> {
-  const items: VideoItem[] = [];
-  const seen = new Set<string>();
-  let cursor = '0';
-  for (let page = 0; page < PAGE_LIMIT; page++) {
-    const parameters: Record<string, string> = operation === 'likes'
-      ? { sec_user_id: secUid, max_cursor: cursor, count: '18' }
-      : { cursor, count: '20' };
-    const response = await request(operation, parameters);
-    const parsed = parseVideoList(response.body, cursor, response.status);
-    for (const item of parsed.items) {
-      if (!seen.has(item.id)) { seen.add(item.id); items.push(item); }
-    }
-    if (!parsed.hasMore || !parsed.nextCursor) break;
-    cursor = parsed.nextCursor;
-  }
-  return items;
-}
+// The likes / favourites lists are Argus-protected private endpoints: their
+// requests must be signed by Douyin's own page SDK. Instead of trying to forge
+// an a_bogus (which gets rejected with "Sign Invalid"), we let the real, already
+// logged-in Douyin page load its own "我的喜欢 / 我的收藏" tab and capture the
+// responses it fires — those carry a valid signature. We just read what the page
+// already fetched and merge it into the local library.
+export type CapturePage = { status: number; body: string };
+export type CaptureCollection = (kind: 'likes' | 'favorites') => Promise<CapturePage[]>;
 
 function toLibraryWork(item: VideoItem, index: number): LibraryWork {
   return {
@@ -52,15 +22,40 @@ function toLibraryWork(item: VideoItem, index: number): LibraryWork {
   };
 }
 
+async function collectFromCapture(capture: CaptureCollection, kind: 'likes' | 'favorites'): Promise<VideoItem[]> {
+  const pages = await capture(kind);
+  if (!pages.length) {
+    throw new CommentReadError('empty', kind === 'likes'
+      ? '没有捕获到“我的喜欢”数据，请确认已登录抖音后重试。'
+      : '没有捕获到“我的收藏”数据，请确认已登录抖音后重试。');
+  }
+  const items: VideoItem[] = [];
+  const seen = new Set<string>();
+  let lastError: unknown = null;
+  for (const page of pages) {
+    let list: VideoItem[];
+    try {
+      list = parseVideoItems(page.body, page.status);
+    } catch (failure) {
+      lastError = failure;
+      continue;
+    }
+    for (const item of list) {
+      if (!seen.has(item.id)) { seen.add(item.id); items.push(item); }
+    }
+  }
+  if (!items.length && lastError) throw lastError;
+  return items;
+}
+
 export type SyncResult = { liked: number; saved: number };
 
 export async function syncDouyinLibrary(
-  request: Requester,
+  captureCollection: CaptureCollection,
   importCollection: (file: LibraryImport) => Promise<unknown>,
 ): Promise<SyncResult> {
-  const secUid = await resolveSecUid(request);
-  const likes = await collectAll(request, 'likes', secUid);
-  const favorites = await collectAll(request, 'favorites', secUid);
+  const likes = await collectFromCapture(captureCollection, 'likes');
+  const favorites = await collectFromCapture(captureCollection, 'favorites');
   const exportedAt = Date.now();
   if (likes.length) {
     await importCollection({

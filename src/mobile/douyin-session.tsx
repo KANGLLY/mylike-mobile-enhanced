@@ -26,6 +26,24 @@ const LOGIN_URL = 'https://www.douyin.com/user/self?showTab=like';
 // Force a desktop-like navigator so the PC page's fingerprint stays consistent.
 const FINGERPRINT = `(function(){try{Object.defineProperty(navigator,'platform',{get:function(){return 'Win32';}});Object.defineProperty(navigator,'hardwareConcurrency',{get:function(){return 8;}});}catch(e){}})();true;`;
 
+// The logged-in page itself loads the likes / favourites tabs; we hook its own
+// fetch/XHR to capture the signed responses it produces. That keeps us on the
+// official signature path (no forged a_bogus) — we just read what the page got.
+const LIKES_URL = 'https://www.douyin.com/user/self?showTab=like';
+const FAVORITES_URL = 'https://www.douyin.com/user/self?showTab=favorite_collection';
+const CAPTURE_HOOK = `(function(){try{
+function send(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(e){}}
+function opOf(u){try{if(!u)return '';if(u.indexOf('/aweme/v1/web/aweme/favorite/')>=0)return 'likes';if(u.indexOf('/aweme/v1/web/aweme/listcollection/')>=0)return 'favorites';}catch(e){}return '';}
+var of=window.fetch;
+if(of){window.fetch=function(input,init){var url='';try{url=typeof input==='string'?input:(input&&input.url)||'';}catch(e){}var op=opOf(url);var pr=of.apply(this,arguments);if(op){try{pr.then(function(resp){try{resp.clone().text().then(function(t){send({__mylikeCap:true,op:op,status:resp.status,body:t});});}catch(e){}});}catch(e){}}return pr;};}
+var oo=XMLHttpRequest.prototype.open,os=XMLHttpRequest.prototype.send;
+XMLHttpRequest.prototype.open=function(m,u){try{this.__mop=opOf(u);}catch(e){}return oo.apply(this,arguments);};
+XMLHttpRequest.prototype.send=function(){var x=this;if(x.__mop){try{x.addEventListener('load',function(){try{send({__mylikeCap:true,op:x.__mop,status:x.status,body:x.responseText});}catch(e){}});}catch(e){}}return os.apply(this,arguments);};
+}catch(e){}})();true;`;
+const CAPTURE_SCROLL = `(function(){var n=0;function push(){try{window.scrollTo(0,1e9);}catch(e){}try{document.documentElement.scrollTop=1e9;document.body.scrollTop=1e9;}catch(e){}try{var els=document.querySelectorAll('div');var best=null,bh=0;for(var i=0;i<els.length;i++){var el=els[i];if(el.scrollHeight>el.clientHeight+100&&el.clientHeight>300&&el.scrollHeight>bh){bh=el.scrollHeight;best=el;}}if(best){best.scrollTop=best.scrollHeight;}}catch(e){}}var iv=setInterval(function(){push();if(++n>70){clearInterval(iv);}},1000);push();})();true;`;
+
+export type CapturePage = { status: number; body: string };
+
 type Pending = { resolve: (value: BridgeResult) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
 export type DouyinSessionValue = {
@@ -42,12 +60,14 @@ export type DouyinSessionValue = {
   checkLogin: (silent?: boolean) => Promise<boolean>;
   logout: () => Promise<void>;
   request: (operation: BridgeOperation, parameters: Record<string, string>, timeoutMs?: number) => Promise<BridgeResult>;
+  captureCollection: (kind: 'likes' | 'favorites') => Promise<CapturePage[]>;
 };
 
 const fallback: DouyinSessionValue = {
   mounted: false, loggedIn: false, checking: false, loginVisible: false, loginError: '', loginDebug: '', nickname: '',
   openLogin: () => {}, closeLogin: () => {}, completeLogin: async () => false, checkLogin: async () => false, logout: async () => {},
   request: async () => { throw new CommentReadError('bridge', '评论服务尚未就绪。'); },
+  captureCollection: async () => [],
 };
 const SessionContext = createContext<DouyinSessionValue>(fallback);
 export function useDouyinSession(): DouyinSessionValue { return useContext(SessionContext); }
@@ -79,6 +99,12 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
   const [loginError, setLoginError] = useState('');
   const [loginDebug, setLoginDebug] = useState('');
   const [resetKey, setResetKey] = useState(0);
+  const [capture, setCapture] = useState<{ kind: 'likes' | 'favorites'; nonce: number } | null>(null);
+  const capRef = useRef<{ kind: 'likes' | 'favorites'; pages: CapturePage[]; seen: Set<string>; done: boolean } | null>(null);
+  const capSeq = useRef(0);
+  const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const capIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const capFinish = useRef<(() => void) | null>(null);
 
   const ensureBridge = useCallback((): Promise<void> => {
     if (!ready.current) {
@@ -111,6 +137,46 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
       return;
     }
     entry.resolve(parsed);
+  }, []);
+
+  const onCaptureMessage = useCallback((event: WebViewMessageEvent) => {
+    let msg: any;
+    try { msg = JSON.parse(event.nativeEvent.data); } catch { return; }
+    if (!msg || msg.__mylikeCap !== true) return;
+    const state = capRef.current;
+    if (!state || state.done || msg.op !== state.kind) return;
+    const body = typeof msg.body === 'string' ? msg.body : '';
+    if (!body) return;
+    const status = Number(msg.status) || 0;
+    const key = `${status}|${body.length}|${body.slice(0, 48)}`;
+    if (state.seen.has(key)) return;
+    state.seen.add(key);
+    state.pages.push({ status, body });
+    if (capIdle.current) clearTimeout(capIdle.current);
+    capIdle.current = setTimeout(() => { capFinish.current?.(); }, 7_000);
+  }, []);
+
+  const captureCollection = useCallback((kind: 'likes' | 'favorites'): Promise<CapturePage[]> => {
+    return new Promise<CapturePage[]>(resolve => {
+      capSeq.current += 1;
+      const state = { kind, pages: [] as CapturePage[], seen: new Set<string>(), done: false };
+      capRef.current = state;
+      if (capTimer.current) clearTimeout(capTimer.current);
+      if (capIdle.current) clearTimeout(capIdle.current);
+      const finish = () => {
+        if (state.done) return;
+        state.done = true;
+        if (capTimer.current) { clearTimeout(capTimer.current); capTimer.current = null; }
+        if (capIdle.current) { clearTimeout(capIdle.current); capIdle.current = null; }
+        capFinish.current = null;
+        if (capRef.current === state) capRef.current = null;
+        setCapture(null);
+        resolve(state.pages.slice());
+      };
+      capFinish.current = finish;
+      capTimer.current = setTimeout(finish, 55_000);
+      setCapture({ kind, nonce: capSeq.current });
+    });
   }, []);
 
   const request = useCallback(async (operation: BridgeOperation, parameters: Record<string, string>, timeoutMs = 15_000): Promise<BridgeResult> => {
@@ -198,12 +264,12 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
     return () => { alive = false; clearTimeout(first); clearInterval(interval); };
   }, [loginVisible, detect]);
 
-  useEffect(() => () => { for (const entry of pending.current.values()) clearTimeout(entry.timer); }, []);
+  useEffect(() => () => { for (const entry of pending.current.values()) clearTimeout(entry.timer); if (capTimer.current) clearTimeout(capTimer.current); if (capIdle.current) clearTimeout(capIdle.current); }, []);
 
   const value = useMemo<DouyinSessionValue>(() => ({
     mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname,
-    openLogin, closeLogin, completeLogin, checkLogin, logout, request,
-  }), [mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname, openLogin, closeLogin, completeLogin, checkLogin, logout, request]);
+    openLogin, closeLogin, completeLogin, checkLogin, logout, request, captureCollection,
+  }), [mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname, openLogin, closeLogin, completeLogin, checkLogin, logout, request, captureCollection]);
 
   return <SessionContext.Provider value={value}>
     {children}
@@ -236,11 +302,30 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
         <Text style={styles.loginHint}>用抖音 App 扫码登录（桌面版会显示二维码）。登录成功后本页会自动关闭。{(loginDebug || loginError) ? `\n${loginDebug}${loginError ? `\n${loginError}` : ''}` : ''}</Text>
       </View>}
     </View>}
+    {capture && <View key={`cap-${capture.nonce}`} style={styles.captureHidden} pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      <WebView
+        source={{ uri: capture.kind === 'likes' ? LIKES_URL : FAVORITES_URL }}
+        userAgent={DESKTOP_UA}
+        injectedJavaScriptBeforeContentLoaded={FINGERPRINT + '\n' + CAPTURE_HOOK}
+        injectedJavaScript={CAPTURE_SCROLL}
+        onMessage={onCaptureMessage}
+        javaScriptEnabled
+        domStorageEnabled
+        sharedCookiesEnabled
+        thirdPartyCookiesEnabled
+        cacheEnabled
+        originWhitelist={['*']}
+        mixedContentMode="always"
+        setSupportMultipleWindows={false}
+        style={styles.webview}
+      />
+    </View>}
   </SessionContext.Provider>;
 }
 
 const styles = StyleSheet.create({
   hidden: { position: 'absolute', left: 0, top: 0, width: 2, height: 2, opacity: 0.01, overflow: 'hidden' },
+  captureHidden: { position: 'absolute', left: -3000, top: 0, width: 400, height: 800, opacity: 0.01 },
   overlay: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, zIndex: 1000, elevation: 1000, backgroundColor: '#151723' },
   webview: { flex: 1, backgroundColor: '#fff' },
   loginChrome: { position: 'absolute', left: 0, right: 0, top: 0, zIndex: 1001, elevation: 1001, backgroundColor: '#151723' },

@@ -1,14 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { syncDouyinLibrary } from '../src/mobile/sync-library.ts';
+import { syncDouyinLibrary, type CapturePage } from '../src/mobile/sync-library.ts';
 import type { LibraryImport } from '../src/library-format.ts';
 
-function page(cursor: string, ids: string[], more: boolean) {
+function page(ids: string[]): string {
   return JSON.stringify({
     status_code: 0,
-    has_more: more ? 1 : 0,
-    max_cursor: cursor,
-    cursor,
+    has_more: 0,
     aweme_list: ids.map((id) => ({
       aweme_id: id,
       desc: `video ${id}`,
@@ -19,45 +17,24 @@ function page(cursor: string, ids: string[], more: boolean) {
   });
 }
 
-test('syncDouyinLibrary reads sec_uid, drives likes on max_cursor and favourites on cursor', async () => {
-  const calls: { op: string; params: Record<string, string> }[] = [];
-  const likesPages: Record<string, string> = {
-    '0': page('1700000000001', ['7300000000000000001', '7300000000000000002'], true),
-    '1700000000001': page('0', ['7300000000000000003'], false),
-  };
-  const request = async (op: 'self' | 'likes' | 'favorites', params: Record<string, string>) => {
-    calls.push({ op, params });
-    if (op === 'self') {
-      return {
-        status: 200,
-        body: JSON.stringify({ status_code: 0, user: { uid: 123, sec_uid: 'MS4wLjABAAAA_sec_uid_1', nickname: '我' } }),
-      };
+test('syncDouyinLibrary captures likes/favourites pages, dedupes and merges them', async () => {
+  const captured: string[] = [];
+  const capture = async (kind: 'likes' | 'favorites'): Promise<CapturePage[]> => {
+    captured.push(kind);
+    if (kind === 'likes') {
+      return [
+        { status: 200, body: page(['7300000000000000001', '7300000000000000002']) },
+        { status: 200, body: page(['7300000000000000002', '7300000000000000003']) },
+      ];
     }
-    if (op === 'likes') {
-      const body = likesPages[params.max_cursor];
-      assert.ok(body, `unexpected max_cursor ${params.max_cursor}`);
-      return { status: 200, body };
-    }
-    return { status: 200, body: page('0', ['7400000000000000001'], false) };
+    return [{ status: 200, body: page(['7400000000000000001']) }];
   };
 
   const imports: LibraryImport[] = [];
-  const result = await syncDouyinLibrary(request, async (file) => { imports.push(file); });
+  const result = await syncDouyinLibrary(capture, async (file) => { imports.push(file); });
 
   assert.deepEqual(result, { liked: 3, saved: 1 });
-  // The first likes request must carry sec_user_id and paginate on max_cursor.
-  const firstLike = calls.find((c) => c.op === 'likes')!;
-  assert.equal(firstLike.params.sec_user_id, 'MS4wLjABAAAA_sec_uid_1');
-  assert.equal(firstLike.params.max_cursor, '0');
-  assert.equal(firstLike.params.count, '18');
-  // Second likes page advances on max_cursor.
-  const likeCalls = calls.filter((c) => c.op === 'likes');
-  assert.equal(likeCalls[1].params.max_cursor, '1700000000001');
-  // Favourites uses cursor.
-  const fav = calls.find((c) => c.op === 'favorites')!;
-  assert.equal(fav.params.cursor, '0');
-  assert.equal(fav.params.count, '20');
-
+  assert.deepEqual(captured, ['likes', 'favorites']);
   assert.equal(imports.length, 2);
   assert.equal(imports[0].source, 'likes');
   assert.equal(imports[0].works.length, 3);
@@ -65,10 +42,15 @@ test('syncDouyinLibrary reads sec_uid, drives likes on max_cursor and favourites
   assert.equal(imports[1].works.length, 1);
 });
 
-test('syncDouyinLibrary refuses to sync when the session has no sec_uid', async () => {
-  const request = async (_op: 'self' | 'likes' | 'favorites') => ({
-    status: 200,
-    body: JSON.stringify({ status_code: 0, user: { uid: 1, nickname: 'x' } }),
-  });
-  await assert.rejects(() => syncDouyinLibrary(request, async () => {}), /重新登录/);
+test('syncDouyinLibrary surfaces a 403 Sign Invalid body as a rejection', async () => {
+  const capture = async (kind: 'likes' | 'favorites'): Promise<CapturePage[]> => {
+    if (kind === 'likes') return [{ status: 403, body: JSON.stringify({ status_code: 0, status_msg: 'Blocked by ArgusSecurityPlugin Sign Invalid' }) }];
+    return [{ status: 200, body: page(['1']) }];
+  };
+  await assert.rejects(() => syncDouyinLibrary(capture, async () => {}), /被拒绝/);
+});
+
+test('syncDouyinLibrary refuses when nothing was captured', async () => {
+  const capture = async (): Promise<CapturePage[]> => [];
+  await assert.rejects(() => syncDouyinLibrary(capture, async () => {}), /没有捕获到/);
 });

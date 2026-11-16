@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import * as MediaLibrary from 'expo-media-library';
-import type { MediaResult } from '../douyin';
+import * as MediaLibrary from 'expo-media-library/legacy';
+import { mediaHeaders, type MediaResult } from '../douyin';
 
 export type SaveKind = 'video' | 'images' | 'audio';
 
@@ -12,7 +12,9 @@ function extOf(url: string, fallback: string): string {
 async function download(url: string, fallbackExt: string): Promise<string> {
   const dir = FileSystem.cacheDirectory ?? '';
   const target = `${dir}mylike_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${extOf(url, fallbackExt)}`;
-  const result = await FileSystem.downloadAsync(url, target);
+  // Douyin's CDN rejects requests without a referer/user-agent, so carry the same
+  // headers the player uses when it streams the media.
+  const result = await FileSystem.downloadAsync(url, target, { headers: mediaHeaders });
   if (typeof result.status === 'number' && result.status >= 400) {
     throw new Error(`下载失败（HTTP ${result.status}）`);
   }

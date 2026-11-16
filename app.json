@@ -3,9 +3,12 @@
     "name": "MyLike",
     "slug": "mylike-guest-player",
     "version": "1.0.2",
-    "orientation": "portrait",
+    "orientation": "default",
     "userInterfaceStyle": "light",
-    "platforms": ["ios", "android"],
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "icon": "./assets/icons/ios/classic.png",
     "ios": {
       "bundleIdentifier": "com.mylike.replay",
@@ -32,23 +35,38 @@
         {
           "classic": {
             "ios": "./assets/icons/ios/classic.png",
-            "android": { "foregroundImage": "./assets/icons/android/classic-fg.png", "backgroundColor": "#2A2028" }
+            "android": {
+              "foregroundImage": "./assets/icons/android/classic-fg.png",
+              "backgroundColor": "#2A2028"
+            }
           },
           "midnight": {
             "ios": "./assets/icons/ios/midnight.png",
-            "android": { "foregroundImage": "./assets/icons/android/midnight-fg.png", "backgroundColor": "#111114" }
+            "android": {
+              "foregroundImage": "./assets/icons/android/midnight-fg.png",
+              "backgroundColor": "#111114"
+            }
           },
           "sakura": {
             "ios": "./assets/icons/ios/sakura.png",
-            "android": { "foregroundImage": "./assets/icons/android/sakura-fg.png", "backgroundColor": "#ff5c96" }
+            "android": {
+              "foregroundImage": "./assets/icons/android/sakura-fg.png",
+              "backgroundColor": "#ff5c96"
+            }
           },
           "ocean": {
             "ios": "./assets/icons/ios/ocean.png",
-            "android": { "foregroundImage": "./assets/icons/android/ocean-fg.png", "backgroundColor": "#2f6bff" }
+            "android": {
+              "foregroundImage": "./assets/icons/android/ocean-fg.png",
+              "backgroundColor": "#2f6bff"
+            }
           },
           "forest": {
             "ios": "./assets/icons/ios/forest.png",
-            "android": { "foregroundImage": "./assets/icons/android/forest-fg.png", "backgroundColor": "#12a06a" }
+            "android": {
+              "foregroundImage": "./assets/icons/android/forest-fg.png",
+              "backgroundColor": "#12a06a"
+            }
           }
         }
       ]

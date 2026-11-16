@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, AppState, BackHandler, FlatList, Image, Modal
 import { GestureDetector, GestureHandlerRootView, usePanGesture } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CommentSheet } from '../CommentSheet';
 import { mediaHeaders } from '../douyin';
@@ -97,8 +98,6 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   const photo = current.data && 'images' in current.data ? Math.max(0, Math.min(current.photos - 1, requestedPhoto)) : requestedPhoto;
   const gallery = current.data ? 'images' in current.data : current.work?.kind !== 'video' && Boolean(current.work);
   const videoUri = current.data && 'candidates' in current.data ? current.data.candidates[0] ?? '' : '';
-  const videoSize = current.data && 'candidates' in current.data ? current.data.size : undefined;
-  const landscapeVideo = Boolean(videoUri && videoSize && videoSize.width > videoSize.height);
   const boostable = !gallery || current.hasLive;
   const boosted = playbackStateId.current === id && (edgeHeld || boostLocked) && boostable;
   const mediaPaused = playbackStateId.current === id && paused && !(edgeHeld && boostable);
@@ -190,7 +189,17 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
     if (pending === id && preferences.auto && !next()) setPaused(true);
   }, [pinching, moving, playing, paused, id, preferences.auto, next]);
   function retry() { setPaused(false); control.current?.retry(); }
-  const closeFullscreen = useCallback(() => { setFullscreen(false); setPaused(false); }, []);
+  const openFullscreen = useCallback(() => {
+    if (!videoUri) return;
+    setPaused(true);
+    setFullscreen(true);
+    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+  }, [videoUri]);
+  const closeFullscreen = useCallback(() => {
+    setFullscreen(false);
+    setPaused(false);
+    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+  }, []);
   async function doSave(kind: SaveKind) {
     if (!current.data || saving) return;
     setSaving(true);
@@ -199,6 +208,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
     finally { setSaving(false); }
   }
   useEffect(() => { if (!visible || !focused) { setFullscreen(false); } }, [visible, focused]);
+  useEffect(() => () => { void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); }, []);
   const author = current.data?.author || current.work?.author || '未知作者';
   const authorGroup = current.work?.author || author;
   const countLabel = (value: number | undefined, fallback: string) => value === undefined ? fallback : value >= 10000 ? `${(value / 10000).toFixed(1)}万` : String(value);
@@ -226,7 +236,6 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
         <View style={styles.tool}><IconButton name="star" label="切换本机收藏，长按管理收藏夹" size={34} color={saved ? '#ffc345' : '#fff'} onPress={() => { if (current.work) setMark(id, 'saved', !saved); }} onLongPress={() => { if (current.work) setGroupId(id); }} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.favorites, '收藏')}</Text></View>
         <View style={styles.tool}><IconButton name="arrow-redo" label="分享公开作品链接" size={33} onPress={() => setPanel('share')} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.shares, '分享')}</Text></View>
       </View>
-      {landscapeVideo && <Pressable accessibilityRole="button" accessibilityLabel="全屏观看" onPress={() => { setPaused(true); setFullscreen(true); }} style={[styles.fullscreenBtn, { bottom: chrome.bottom + 46 }]}><Ionicons name="scan-outline" size={15} color="#fff" /><Text style={styles.fullscreenText}>全屏观看</Text></Pressable>}
       {gallery && current.photos > 1 && <Text style={[styles.photo, { top: chrome.top + 70, right: Math.max(20, insets.right) }]}>{photo + 1} / {current.photos}</Text>}
       {gallery && current.photos > 1 && <View pointerEvents="none" style={[styles.segments, { bottom: chrome.bottom + 7 }]}>{Array.from({ length: Math.min(current.photos, 20) }, (_, index) => <View key={index} style={[styles.segment, index <= photo && styles.segmentActive]} />)}</View>}
     </>}
@@ -284,6 +293,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
             <Button title={preferences.danmaku ? '弹幕：开' : '弹幕：关'} selected={preferences.danmaku} onPress={() => setPreferences({ danmaku: !preferences.danmaku })} />
             <Button title="播放队列" onPress={() => setPanel('queue')} /><Button title="重新打乱" onPress={() => { setPanel(null); reshuffle(); }} /><Button title="重新取链" onPress={() => { setPanel(null); retry(); }} />
           </View><View style={styles.options}>
+            {!gallery && videoUri ? <Button title="全屏播放" onPress={() => { setPanel(null); openFullscreen(); }} /> : null}
             {current.data && 'candidates' in current.data && current.data.candidates.length > 0 && <Button title={saving ? '保存中…' : '保存视频'} disabled={saving} onPress={() => { void doSave('video'); }} />}
             {current.data && 'images' in current.data && current.data.images.length > 0 && <Button title={saving ? '保存中…' : '保存图片'} disabled={saving} onPress={() => { void doSave('images'); }} />}
             {current.data && current.data.musicCandidates && current.data.musicCandidates.length > 0 && <Button title={saving ? '保存中…' : '保存音频'} disabled={saving} onPress={() => { void doSave('audio'); }} />}

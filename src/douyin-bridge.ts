@@ -295,6 +295,35 @@ export function parseVideoList(body: string, requestedCursor: string, httpStatus
   return { items, nextCursor, hasMore: more && nextCursor !== null };
 }
 
+// Parse a captured "likes / favourites" page body into items, ignoring pagination
+// (the collection sync captures several already-signed pages and unions them).
+export function parseVideoItems(body: string, httpStatus = 200): VideoItem[] {
+  if (httpStatus === 401 || httpStatus === 403) {
+    const snippet = body.replace(/\s+/g, ' ').trim().slice(0, 240);
+    let code = '';
+    try { code = statusCodeOf(record(safeJson(trimToFirstJson(body))) ?? {}); } catch { /* ignore */ }
+    if (!snippet || code === '8' || /not[\s_-]*login|未登录|登录已失效/i.test(snippet)) throw new CommentReadError('auth', '登录状态已失效，请重新登录抖音。');
+    throw new CommentReadError('restricted', `点赞/收藏接口被拒绝（HTTP ${httpStatus}）${snippet ? `：${snippet}` : ''}`);
+  }
+  if (httpStatus === 429) throw new CommentReadError('restricted', '请求过于频繁，请稍后再试。');
+  if (httpStatus < 200 || httpStatus >= 300) throw new CommentReadError('network', `列表请求失败（HTTP ${httpStatus}）。`);
+  if (/<(?:html|!doctype)/i.test(body.slice(0, 500))) throw new CommentReadError('restricted', '接口返回了网页，请稍后重试。');
+  if (!body.trim()) return [];
+  let payload: Record<string, unknown> | undefined;
+  try { payload = record(safeJson(trimToFirstJson(body))); } catch { throw new CommentReadError('invalid', '列表响应不是有效 JSON。'); }
+  if (!payload) return [];
+  const code = statusCodeOf(payload);
+  if (code !== '' && code !== '0') throw new CommentReadError('restricted', `未能读取列表（status_code=${code}，HTTP ${httpStatus}）`);
+  const rows = Array.isArray(payload.aweme_list) ? payload.aweme_list : [];
+  const items: VideoItem[] = [];
+  const seen = new Set<string>();
+  for (const raw of rows) {
+    const item = awemeToItem(raw);
+    if (item && !seen.has(item.id)) { seen.add(item.id); items.push(item); }
+  }
+  return items;
+}
+
 export type DanmakuItem = { id: string; text: string; offsetMs: number; type: number };
 export type DanmakuPage = { items: DanmakuItem[]; total: number };
 
