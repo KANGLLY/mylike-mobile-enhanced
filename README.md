@@ -37,7 +37,7 @@
 
 前往 [GitHub Releases](https://github.com/KANGLLY/mylike-mobile-enhanced/releases) 下载。
 
-> 注意：移动端不用登录，但是只能播放不能采集，需要通过 MyLike 桌面版导出列表后再导入
+
 
 ### Android
 
