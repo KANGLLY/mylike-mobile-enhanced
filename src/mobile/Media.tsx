@@ -13,7 +13,7 @@ import { neighborPages, pageTranslation, videoFit, type MediaSize } from './layo
 import { createFramePrewarm, createPlaybackIntent, resumeSeekTarget, type PlaybackHandoff } from './playback';
 import { createFrameProbe, createPlaybackStartProbe } from './frame-metrics';
 
-export type MediaControl = { id: string; retry: () => void; seek: ((seconds: number) => void) | null; setRate?: (rate: number) => void; silence?: () => void };
+export type MediaControl = { id: string; retry: () => void; seek: ((seconds: number) => void) | null; silence?: () => void };
 export type MediaInfo = { id: string; work: Work | null; data: MediaResult | null; error: string; photos: number; hasLive: boolean; musicUnavailable: boolean; livePhase: 'none' | 'loading' | 'ready' | 'failed' };
 export function Poster({ work, fit = 'contain' }: { work: Pick<Work, 'title' | 'coverUrl' | 'kind'> | null; fit?: 'contain' | 'cover' }) {
   const [failed, setFailed] = useState(false);
@@ -189,12 +189,9 @@ function Video({ id, uri, current, active, prime, prepare, paused, boosted, seek
       callbacks.current.onTime(id, player.currentTime, player.duration, true);
     };
     control.current.seek = seek;
-    const setRate = (value: number) => { try { player.playbackRate = value; } catch { /* ignore unsupported rate */ } };
-    control.current.setRate = setRate;
     const previousSilence = control.current.silence; const silence = () => intent.stop(); control.current.silence = silence;
     return () => {
       if (control.current?.seek === seek) control.current.seek = null;
-      if (control.current?.setRate === setRate) control.current.setRate = undefined;
       if (control.current?.silence === silence) control.current.silence = previousSilence;
     };
   }, [id, active, current, control, player, position, intent]);

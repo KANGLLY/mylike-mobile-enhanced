@@ -7,10 +7,11 @@ import { syncDouyinLibrary, type SyncProgress } from './sync-library';
 // A single, app-wide update task. It lives above the navigator so leaving the
 // More/Settings screen keeps the likes/favourites capture running in the
 // background; it only stops when the user explicitly cancels.
+type SyncMode = 'top' | 'down';
 type SyncValue = {
   syncing: boolean;
   progress: SyncProgress | null;
-  start: () => Promise<void>;
+  start: (mode: SyncMode) => Promise<void>;
   cancel: () => void;
 };
 
@@ -26,7 +27,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const running = useRef(false);
   const cancelled = useRef(false);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (mode: SyncMode) => {
     if (running.current) return;
     running.current = true;
     cancelled.current = false;
@@ -38,6 +39,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         store.importCollection,
         (value) => { if (!cancelled.current) setProgress(value); },
         () => cancelled.current,
+        mode,
       );
       if (cancelled.current) { Alert.alert('已取消更新', '已停止本次更新。'); return; }
       changed();

@@ -36,7 +36,11 @@ export function MoreScreen({ onBack, onManage, onImport, onOpen, visible }: { on
       Alert.alert('需要登录', '请先在弹出的页面登录抖音，登录成功后再点一次“从抖音更新点赞和收藏”。');
       return;
     }
-    await start();
+    Alert.alert('从抖音更新', '选择更新方式', [
+      { text: '更新顶部（只补最新）', onPress: () => { void start('top'); } },
+      { text: '向下采集（继续更旧）', onPress: () => { void start('down'); } },
+      { text: '取消', style: 'cancel' },
+    ]);
   };
   const label = progress ? (progress.stage === 'likes' ? '正在读取“我的喜欢”' : '正在读取“我的收藏”') : '';
   const links: { label: string; icon: IconName; action: () => void }[] = [

@@ -40,7 +40,7 @@ var oo=XMLHttpRequest.prototype.open,os=XMLHttpRequest.prototype.send;
 XMLHttpRequest.prototype.open=function(m,u){try{this.__mop=opOf(u);}catch(e){}return oo.apply(this,arguments);};
 XMLHttpRequest.prototype.send=function(){var x=this;if(x.__mop){try{x.addEventListener('load',function(){try{send({__mylikeCap:true,op:x.__mop,status:x.status,body:x.responseText});}catch(e){}});}catch(e){}}return os.apply(this,arguments);};
 }catch(e){}})();true;`;
-const CAPTURE_SCROLL = `(function(){var n=0;function push(){try{window.scrollTo(0,1e9);}catch(e){}try{document.documentElement.scrollTop=1e9;document.body.scrollTop=1e9;}catch(e){}try{var els=document.querySelectorAll('div');var best=null,bh=0;for(var i=0;i<els.length;i++){var el=els[i];if(el.scrollHeight>el.clientHeight+100&&el.clientHeight>300&&el.scrollHeight>bh){bh=el.scrollHeight;best=el;}}if(best){best.scrollTop=best.scrollHeight;}}catch(e){}}var iv=setInterval(function(){push();if(++n>70){clearInterval(iv);}},1000);push();})();true;`;
+const captureScroll = (max: number) => `(function(){var n=0;function push(){try{window.scrollTo(0,1e9);}catch(e){}try{document.documentElement.scrollTop=1e9;document.body.scrollTop=1e9;}catch(e){}try{var els=document.querySelectorAll('div');var best=null,bh=0;for(var i=0;i<els.length;i++){var el=els[i];if(el.scrollHeight>el.clientHeight+100&&el.clientHeight>300&&el.scrollHeight>bh){bh=el.scrollHeight;best=el;}}if(best){best.scrollTop=best.scrollHeight;}}catch(e){}}var iv=setInterval(function(){push();if(++n>${max}){clearInterval(iv);}},1000);push();})();true;`;
 
 export type CapturePage = { status: number; body: string };
 
@@ -60,7 +60,7 @@ export type DouyinSessionValue = {
   checkLogin: (silent?: boolean) => Promise<boolean>;
   logout: () => Promise<void>;
   request: (operation: BridgeOperation, parameters: Record<string, string>, timeoutMs?: number) => Promise<BridgeResult>;
-  captureCollection: (kind: 'likes' | 'favorites', onPage?: (page: CapturePage) => void) => Promise<CapturePage[]>;
+  captureCollection: (kind: 'likes' | 'favorites', options?: { onPage?: (page: CapturePage) => void; maxScrolls?: number; stop?: () => boolean }) => Promise<CapturePage[]>;
   cancelCapture: () => void;
 };
 
@@ -101,8 +101,8 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
   const [loginError, setLoginError] = useState('');
   const [loginDebug, setLoginDebug] = useState('');
   const [resetKey, setResetKey] = useState(0);
-  const [capture, setCapture] = useState<{ kind: 'likes' | 'favorites'; nonce: number } | null>(null);
-  const capRef = useRef<{ kind: 'likes' | 'favorites'; pages: CapturePage[]; seen: Set<string>; done: boolean; onPage?: (page: CapturePage) => void } | null>(null);
+  const [capture, setCapture] = useState<{ kind: 'likes' | 'favorites'; nonce: number; maxScrolls: number } | null>(null);
+  const capRef = useRef<{ kind: 'likes' | 'favorites'; pages: CapturePage[]; seen: Set<string>; done: boolean; onPage?: (page: CapturePage) => void; maxScrolls: number; stop?: () => boolean } | null>(null);
   const capSeq = useRef(0);
   const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -156,14 +156,16 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
     const page = { status, body };
     state.pages.push(page);
     try { state.onPage?.(page); } catch { /* progress callback must never break capture */ }
+    if (state.stop?.()) { capFinish.current?.(); return; }
     if (capIdle.current) clearTimeout(capIdle.current);
     capIdle.current = setTimeout(() => { capFinish.current?.(); }, 7_000);
   }, []);
 
-  const captureCollection = useCallback((kind: 'likes' | 'favorites', onPage?: (page: CapturePage) => void): Promise<CapturePage[]> => {
+  const captureCollection = useCallback((kind: 'likes' | 'favorites', options?: { onPage?: (page: CapturePage) => void; maxScrolls?: number; stop?: () => boolean }): Promise<CapturePage[]> => {
     return new Promise<CapturePage[]>(resolve => {
       capSeq.current += 1;
-      const state = { kind, pages: [] as CapturePage[], seen: new Set<string>(), done: false, onPage };
+      const maxScrolls = Math.max(1, options?.maxScrolls ?? 70);
+      const state = { kind, pages: [] as CapturePage[], seen: new Set<string>(), done: false, onPage: options?.onPage, maxScrolls, stop: options?.stop };
       capRef.current = state;
       if (capTimer.current) clearTimeout(capTimer.current);
       if (capIdle.current) clearTimeout(capIdle.current);
@@ -179,7 +181,7 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
       };
       capFinish.current = finish;
       capTimer.current = setTimeout(finish, 55_000);
-      setCapture({ kind, nonce: capSeq.current });
+      setCapture({ kind, nonce: capSeq.current, maxScrolls });
     });
   }, []);
 
@@ -313,7 +315,7 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
         source={{ uri: capture.kind === 'likes' ? LIKES_URL : FAVORITES_URL }}
         userAgent={DESKTOP_UA}
         injectedJavaScriptBeforeContentLoaded={FINGERPRINT + '\n' + CAPTURE_HOOK}
-        injectedJavaScript={CAPTURE_SCROLL}
+        injectedJavaScript={captureScroll(capture.maxScrolls)}
         onMessage={onCaptureMessage}
         javaScriptEnabled
         domStorageEnabled

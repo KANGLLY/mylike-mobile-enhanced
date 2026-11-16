@@ -8,7 +8,9 @@ import type { LibraryImport, LibraryWork } from '../library-format.ts';
 // responses it fires — those carry a valid signature. We just read what the page
 // already fetched and merge it into the local library.
 export type CapturePage = { status: number; body: string };
-export type CaptureCollection = (kind: 'likes' | 'favorites', onPage?: (page: CapturePage) => void) => Promise<CapturePage[]>;
+export type CaptureOptions = { onPage?: (page: CapturePage) => void; maxScrolls?: number };
+export type CaptureMode = 'top' | 'down';
+export type CaptureCollection = (kind: 'likes' | 'favorites', options?: CaptureOptions) => Promise<CapturePage[]>;
 export type SyncProgress = { stage: 'likes' | 'favorites'; received: number; pages: number };
 
 function toLibraryWork(item: VideoItem, index: number): LibraryWork {
@@ -27,17 +29,21 @@ async function collectFromCapture(
   capture: CaptureCollection,
   kind: 'likes' | 'favorites',
   onProgress?: (value: SyncProgress) => void,
+  mode: CaptureMode = 'down',
 ): Promise<VideoItem[]> {
   let pages = 0;
   const liveSeen = new Set<string>();
-  const captured = await capture(kind, (page) => {
-    pages += 1;
-    try {
-      for (const item of parseVideoItems(page.body, page.status)) liveSeen.add(item.id);
-    } catch {
-      /* ignore live-count errors; the authoritative pass below reports them */
-    }
-    onProgress?.({ stage: kind, received: liveSeen.size, pages });
+  const captured = await capture(kind, {
+    maxScrolls: mode === 'top' ? 4 : 70,
+    onPage: (page) => {
+      pages += 1;
+      try {
+        for (const item of parseVideoItems(page.body, page.status)) liveSeen.add(item.id);
+      } catch {
+        /* ignore live-count errors; the authoritative pass below reports them */
+      }
+      onProgress?.({ stage: kind, received: liveSeen.size, pages });
+    },
   });
   if (!captured.length) {
     throw new CommentReadError('empty', kind === 'likes'
@@ -70,10 +76,11 @@ export async function syncDouyinLibrary(
   importCollection: (file: LibraryImport) => Promise<unknown>,
   onProgress?: (value: SyncProgress) => void,
   shouldStop?: () => boolean,
+  mode: CaptureMode = 'down',
 ): Promise<SyncResult> {
-  const likes = await collectFromCapture(captureCollection, 'likes', onProgress);
+  const likes = await collectFromCapture(captureCollection, 'likes', onProgress, mode);
   if (shouldStop?.()) throw new Error('已取消更新。');
-  const favorites = await collectFromCapture(captureCollection, 'favorites', onProgress);
+  const favorites = await collectFromCapture(captureCollection, 'favorites', onProgress, mode);
   if (shouldStop?.()) throw new Error('已取消更新。');
   const exportedAt = Date.now();
   if (likes.length) {
