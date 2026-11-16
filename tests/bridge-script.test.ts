@@ -105,6 +105,7 @@ test('likes reads use a GET with count and msToken on the favorite endpoint', as
   ok(requestedUrl.startsWith('https://www.douyin.com/aweme/v1/web/aweme/favorite/?'), 'hits the likes endpoint');
   ok(requestedUrl.includes('count=20'));
   ok(requestedUrl.includes('msToken=tok'));
+  ok(requestedUrl.includes('a_bogus='), 'signs likes with an a_bogus token');
 });
 
 test('comment replies are signed exactly like the comment list (regression: replies need msToken + fingerprint + referrer)', async () => {
@@ -160,4 +161,5 @@ test('favourites reads POST cursor/count with the csrf downgrade header', async 
   equal(init.method, 'POST');
   equal(init.headers['x-secsdk-csrf-token'], 'DOWNGRADE');
   equal(init.body, 'cursor=0&count=20');
+  ok(requestedUrl.includes('a_bogus='), 'signs favourites POST with an a_bogus token');
 });

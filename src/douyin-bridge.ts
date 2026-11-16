@@ -346,11 +346,11 @@ const PAGE_SCRIPT = [
   "if(op==='favorites'){mylikeFp(params);params.set('pc_libra_divert','Windows');params.set('publish_video_strategy_type','2');mylikeToken(params);referrer='https://www.douyin.com/user/self?from_tab_name=main&showTab=favorite_collection';method='POST';headers['content-type']='application/x-www-form-urlencoded;charset=UTF-8';headers['x-secsdk-csrf-token']='DOWNGRADE';body=new URLSearchParams({cursor:p.cursor||'0',count:p.count||'20'}).toString();}",
   "else{for(i=0;i<keys.length;i++){params.set(keys[i],p[keys[i]]);}if(op==='comments'||op==='commentReplies'){if(!params.has('count')){params.set('count','20');}mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.aweme_id||p.item_id||'');}else if(op==='likes'){mylikeToken(params);}else if(op==='danmaku'){mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.item_id||'');}}",
   "var query=params.toString();",
-  // Replies are risk-gated: the page signs the comment list but not the reply
-  // endpoint, so sign it here. a_bogus for replies uses the [0,1,8] arguments
-  // variant (sign_reply), unlike detail's [0,1,14]; the query is signed exactly
-  // as it is sent (we append a_bogus to that same string).
-  "if((op==='commentReplies'||op==='danmaku')&&typeof MYLIKE_A_BOGUS!=='undefined'&&MYLIKE_A_BOGUS){try{var ab=(op==='commentReplies'?MYLIKE_A_BOGUS.reply:MYLIKE_A_BOGUS.detail)(query,navigator.userAgent||'');if(ab){query=query+'&a_bogus='+ab;}}catch(_signErr){}}",
+  // Risk-gated private endpoints (reply list, my likes, my collections) are not
+  // auto-signed by the mobile WebView page (unlike desktop Electron where the
+  // page's webmssdk wraps fetch). Sign them here so they don't hang/return empty.
+  // commentReplies uses the sign_reply ([0,1,8]) variant; everything else detail.
+  "if((op==='commentReplies'||op==='likes'||op==='favorites'||op==='danmaku')&&typeof MYLIKE_A_BOGUS!=='undefined'&&MYLIKE_A_BOGUS){try{var ab=(op==='commentReplies'?MYLIKE_A_BOGUS.reply:MYLIKE_A_BOGUS.detail)(query,navigator.userAgent||'');if(ab){query=query+'&a_bogus='+ab;}}catch(_signErr){}}",
   "href='https://www.douyin.com'+PATHS[op]+'?'+query;",
   "var controller=new AbortController();var timer=setTimeout(function(){try{controller.abort();}catch(_e){}},request.timeout||15000);",
   "var opts={credentials:'include',cache:'no-store',signal:controller.signal,method:method,headers:headers};if(referrer){opts.referrer=referrer;}if(body){opts.body=body;}",

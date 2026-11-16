@@ -7,6 +7,7 @@ import { useDouyinSession } from './douyin-session';
 import { FolderSheet } from './FolderSheet';
 import type { OpenQueue } from './LibraryScreen';
 import { syncDouyinLibrary } from './sync-library';
+import { exportLikesToFile } from './export-likes';
 import { PageHeader, ui } from './ui';
 
 export function MoreScreen({ onBack, onManage, onImport, onOpen, visible }: { onBack: () => void; onManage: (page: 'history' | 'settings') => void; onImport: () => void; onOpen: OpenQueue; visible: boolean }) {
@@ -14,6 +15,17 @@ export function MoreScreen({ onBack, onManage, onImport, onOpen, visible }: { on
   const { store, changed } = useMobile();
   const { request, loggedIn, openLogin } = useDouyinSession();
   const [syncing, setSyncing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const doExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const result = await exportLikesToFile(store);
+      Alert.alert('已导出', `已生成喜欢清单（${result.count} 条），选择“保存到文件”即可拷到电脑导入 PC 版。`);
+    } catch (error) {
+      Alert.alert('导出失败', error instanceof Error ? error.message : '请稍后重试。');
+    } finally { setExporting(false); }
+  };
   const sync = async () => {
     if (syncing) return;
     if (!loggedIn) { openLogin(); return; }
@@ -30,6 +42,7 @@ export function MoreScreen({ onBack, onManage, onImport, onOpen, visible }: { on
     { label: '观看历史', icon: 'time-outline' as const, action: () => onManage('history') },
     { label: '管理收藏夹', icon: 'folder-outline' as const, action: () => setFolders(true) },
     { label: '导入清单', icon: 'download-outline' as const, action: onImport },
+    { label: exporting ? '正在导出…' : '导出喜欢的作品（JSON）', icon: 'share-outline' as const, action: () => { void doExport(); } },
     { label: syncing ? '正在从抖音更新…' : '从抖音更新点赞和收藏', icon: 'sync-outline' as const, action: () => { void sync(); } },
     { label: '设置', icon: 'settings-outline' as const, action: () => onManage('settings') },
   ];
