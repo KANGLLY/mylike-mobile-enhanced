@@ -107,6 +107,32 @@ test('likes reads use a GET with count and msToken on the favorite endpoint', as
   ok(requestedUrl.includes('msToken=tok'));
 });
 
+test('comment replies are signed exactly like the comment list (regression: replies need msToken + fingerprint + referrer)', async () => {
+  const script = buildBridgeScript({ id: 'r5', operation: 'commentReplies', parameters: { item_id: '7708361831513969811', comment_id: '7708474744363270961', cursor: '0', count: '20', item_type: '0' }, timeout: 5_000 });
+  const captured: string[] = [];
+  let requestedUrl = ''; let init: any = null;
+  const context = {
+    window: { ReactNativeWebView: { postMessage: (value: string) => captured.push(value) } },
+    navigator: {
+      language: 'zh-CN', platform: 'Win32', onLine: true, hardwareConcurrency: 8,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    },
+    document: { cookie: 'msToken=tok' },
+    screen: { width: 1280, height: 800 },
+    URLSearchParams, AbortController, setTimeout, clearTimeout,
+    fetch: (url: string, options: any) => { requestedUrl = url; init = options; return Promise.resolve({ status: 200, text: () => Promise.resolve('{"status_code":0,"has_more":0,"comments":[]}') }); },
+  };
+  runInNewContext(script, context, { timeout: 2_000 });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  equal(captured.length, 1);
+  ok(requestedUrl.startsWith('https://www.douyin.com/aweme/v1/web/comment/list/reply/?'), 'hits the reply endpoint');
+  ok(requestedUrl.includes('item_id=7708361831513969811'), 'keeps the aweme id');
+  ok(requestedUrl.includes('comment_id=7708474744363270961'), 'keeps the 19-digit comment id intact');
+  ok(requestedUrl.includes('pc_client_type=1'), 'adds the desktop fingerprint (the bug: replies skipped this)');
+  ok(requestedUrl.includes('msToken=tok'), 'forwards msToken (the bug: replies skipped this)');
+  equal(init.referrer, 'https://www.douyin.com/video/7708361831513969811');
+});
+
 test('favourites reads POST cursor/count with the csrf downgrade header', async () => {
   const script = buildBridgeScript({ id: 'r4', operation: 'favorites', parameters: { cursor: '0', count: '20' }, timeout: 5_000 });
   const captured: string[] = [];

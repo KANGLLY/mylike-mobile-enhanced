@@ -5,7 +5,7 @@ import Animated, { cancelAnimation, useAnimatedScrollHandler, useAnimatedStyle, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 import { mediaHeaders } from './douyin';
-import { parseCommentList, type FullComment } from './douyin-bridge';
+import { parseCommentList, type CommentPage, type FullComment } from './douyin-bridge';
 import { cachedGuestComments, fetchGuestCommentPreview, type GuestComment, type GuestCommentPreview } from './guest-comments';
 import { fetchGuestReplies } from './mobile/guest-replies';
 import { useDouyinSession } from './mobile/douyin-session';
@@ -49,6 +49,7 @@ type ListRow =
   | { key: string; type: 'comment'; item: FullComment }
   | { key: string; type: 'reply'; item: FullComment }
   | { key: string; type: 'moreReplies'; comment: FullComment; loading: boolean }
+  | { key: string; type: 'replyEmpty'; comment: FullComment }
   | { key: string; type: 'replyError'; comment: FullComment; error: string };
 
 type ReplyState = { items: FullComment[]; cursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string };
@@ -98,23 +99,39 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     } finally { if (append) setFullLoadingMore(false); else setFullLoading(false); }
   }, [request, workId]);
 
-  // Load a page of replies for one comment (the /comment/list/reply/ endpoint).
+  // Load a page of replies for one comment. Replies are login-gated: the public
+  // mobile endpoint returns `total:0` for guests, so we read them through the
+  // signed, logged-in page (the same channel that already loads the comment
+  // list). The public endpoint stays only as a fallback if the page route comes
+  // back empty or errors.
   const loadReplies = useCallback(async (comment: FullComment, cursor: string, append: boolean) => {
     setReplyState(previous => {
       const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '' } as ReplyState;
       return { ...previous, [comment.id]: { ...base, loading: true, error: '' } };
     });
     try {
-      // Read replies from the public mobile endpoint via a native fetch — no
-      // page signature needed and no CORS, so it never hangs like the web route.
-      const page = await fetchGuestReplies(workId, comment.id, cursor);
+      let page: CommentPage | null = null;
+      try {
+        const response = await request('commentReplies', {
+          item_id: workId, comment_id: comment.id, cursor, count: '20', item_type: '0',
+        });
+        page = parseCommentList(response.body, workId, cursor, response.status);
+      } catch { page = null; }
+      if (!page || (page.items.length === 0 && !page.hasMore)) {
+        try {
+          const fallback = await fetchGuestReplies(workId, comment.id, cursor);
+          if (!page || fallback.items.length > 0 || fallback.hasMore) page = fallback;
+        } catch { /* keep whatever the page route returned */ }
+      }
+      if (!page) throw new Error('回复读取失败，请重试。');
+      const resolved = page;
       setReplyState(previous => {
         const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, error: '', loading: false } as ReplyState;
         const seen = new Set(base.items.map(item => item.id));
         const merged = append ? base.items.slice() : [];
         if (!append) seen.clear();
-        for (const item of page.items) if (!seen.has(item.id)) { merged.push(item); seen.add(item.id); }
-        return { ...previous, [comment.id]: { items: merged, cursor: page.nextCursor, hasMore: page.hasMore, loaded: true, loading: false, error: '' } };
+        for (const item of resolved.items) if (!seen.has(item.id)) { merged.push(item); seen.add(item.id); }
+        return { ...previous, [comment.id]: { items: merged, cursor: resolved.nextCursor, hasMore: resolved.hasMore, loaded: true, loading: false, error: '' } };
       });
     } catch (failure) {
       const message = failure instanceof Error ? failure.message : '回复读取失败，请重试。';
@@ -141,6 +158,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
       if (state?.items.length) for (const reply of state.items) out.push({ key: `${comment.id}_${reply.id}`, type: 'reply', item: reply });
       if (state?.error) out.push({ key: `${comment.id}_err`, type: 'replyError', comment, error: state.error });
       else if (state?.hasMore && state.cursor) out.push({ key: `${comment.id}_more`, type: 'moreReplies', comment, loading: state.loading });
+      else if (state?.loaded && state.items.length === 0) out.push({ key: `${comment.id}_empty`, type: 'replyEmpty', comment });
     }
     return out;
   }, [fullComments, repliesOpen, replyState]);
@@ -214,6 +232,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
             }
             if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} />;
             if (item.type === 'moreReplies') return <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true)} style={styles.replyMore}><Text style={styles.retry}>{item.loading ? '正在读取更多回复…' : '加载更多回复'}</Text></Pressable>;
+            if (item.type === 'replyEmpty') return <Text style={styles.replyEmpty}>暂无可见回复</Text>;
             return <Pressable accessibilityRole="button" onPress={() => void loadReplies(item.comment, '0', false)} style={styles.replyError}><Text style={styles.meta}>回复读取失败：{item.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>;
           }} /></GestureDetector> : null}
       </>
@@ -237,7 +256,7 @@ const styles = StyleSheet.create({
   debug: { color: '#8b8b96', fontSize: 10, paddingHorizontal: 14, paddingBottom: 6, backgroundColor: '#20222e' },
   loginCta: { color: '#fc2f56', fontSize: 12, fontWeight: '600' },
   list: { padding: 16 }, loading: { padding: 28 }, error: { padding: 16, gap: 9, alignItems: 'center' }, more: { padding: 14, alignItems: 'center' },
-  replyMore: { paddingVertical: 8, paddingLeft: 42, alignItems: 'flex-start' }, replyError: { paddingVertical: 8, paddingLeft: 42, gap: 4, alignItems: 'flex-start' },
+  replyMore: { paddingVertical: 8, paddingLeft: 42, alignItems: 'flex-start' }, replyError: { paddingVertical: 8, paddingLeft: 42, gap: 4, alignItems: 'flex-start' }, replyEmpty: { color: '#8b8b96', fontSize: 12, paddingVertical: 8, paddingLeft: 42 },
   row: { flexDirection: 'row', gap: 11, marginBottom: 25 }, replyRow: { marginBottom: 14, paddingLeft: 8 }, avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#2a2c3a' }, replyAvatar: { width: 26, height: 26, borderRadius: 13 }, body: { flex: 1, gap: 6 },
   name: { color: '#9a9aa5', fontSize: 12 }, text: { color: '#f2f2f5', fontSize: 15, lineHeight: 22 }, meta: { color: '#8b8b96', fontSize: 11 }, reply: { color: '#9a9aa5', fontSize: 12 }, likes: { color: '#9a9aa5', fontSize: 11, paddingTop: 2, maxWidth: 58 },
   attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, attachment: { width: 84, height: 84, borderRadius: 6, backgroundColor: '#2a2c3a' },
