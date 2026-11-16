@@ -8,6 +8,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MobileProvider, useMobile } from './context';
 import { DouyinSessionProvider } from './douyin-session';
+import { SyncProvider } from './sync-context';
 import { FeedScreen } from './FeedScreen';
 import { LibraryScreen, type OpenQueue } from './LibraryScreen';
 import { type Scope, type Session, type Source } from './model';
@@ -25,9 +26,9 @@ const navigationTheme = { ...DarkTheme, colors: { ...DarkTheme.colors, backgroun
 const swipeOptions = { fullScreenGestureEnabled: true, gestureEnabled: true, fullScreenGestureShadowEnabled: false, animationMatchesGesture: true };
 export default function MobileApp() {
   useEffect(() => { void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); }, []);
-  return <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}><SafeAreaProvider style={{ flex: 1, backgroundColor: colors.background }}><DouyinSessionProvider><MobileProvider>
+  return <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}><SafeAreaProvider style={{ flex: 1, backgroundColor: colors.background }}><DouyinSessionProvider><MobileProvider><SyncProvider>
     <RootNavigator />
-  </MobileProvider></DouyinSessionProvider></SafeAreaProvider></GestureHandlerRootView>;
+  </SyncProvider></MobileProvider></DouyinSessionProvider></SafeAreaProvider></GestureHandlerRootView>;
 }
 function RootNavigator() {
   const { epoch } = useMobile();

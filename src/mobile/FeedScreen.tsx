@@ -253,7 +253,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
       {session?.ids.length ? playbackHeight > 0 ? <FeedPager key={version} ref={pager} ids={session.ids} index={session.index} width={width} height={playbackHeight}
         enabled={interactive} gallery={gallery} boostable={boostable} photo={photo} photos={current.photos} photoX={photoX} x={x}
         onCommit={commitPlayback} onPlaybackTarget={targetPlayback} onPhoto={changePhoto} onSide={setSide} onPrepare={setPrepared} onMotion={motion}
-        onTap={togglePause} onLike={like} onHold={holdOptions} onBoost={setEdgeHeld} onBoostTarget={setBoostTarget} onBoostLock={toggleBoostLock} onPinch={setPinching}
+        onTap={togglePause} onLike={like} onHold={holdOptions} onBoost={on => { setEdgeHeld(on); if (on) { const c = control.current; if (c && c.id === id) c.setRate?.(2); } }} onBoostTarget={setBoostTarget} onBoostLock={toggleBoostLock} onPinch={setPinching}
         renderMedia={(workId, active, warm, retain = true) => <Animated.View style={[styles.media, heightStyle]}><MediaSlot id={workId} current={active} retained={active && focused && visible} preserve={retain && focused && visible && foreground} active={active && playing} warm={warm && playing} prepare={!moving && readyId === id}
           paused={mediaPaused} boosted={boosted} seeking={seeking} auto={preferences.auto} rate={preferences.rate} point={active ? session.point : null}
           photo={active ? photo : 0} photoX={photoX} width={width} height={mediaTargetHeight} allowZoom={allowZoom} revision={revision} control={control} handoff={handoff} onInfo={receiveInfo} onTime={receiveTime} onReady={ready} onEnd={next} onPause={pause} /></Animated.View>}

@@ -8,7 +8,8 @@ import type { LibraryImport, LibraryWork } from '../library-format.ts';
 // responses it fires — those carry a valid signature. We just read what the page
 // already fetched and merge it into the local library.
 export type CapturePage = { status: number; body: string };
-export type CaptureCollection = (kind: 'likes' | 'favorites') => Promise<CapturePage[]>;
+export type CaptureCollection = (kind: 'likes' | 'favorites', onPage?: (page: CapturePage) => void) => Promise<CapturePage[]>;
+export type SyncProgress = { stage: 'likes' | 'favorites'; received: number; pages: number };
 
 function toLibraryWork(item: VideoItem, index: number): LibraryWork {
   return {
@@ -22,9 +23,23 @@ function toLibraryWork(item: VideoItem, index: number): LibraryWork {
   };
 }
 
-async function collectFromCapture(capture: CaptureCollection, kind: 'likes' | 'favorites'): Promise<VideoItem[]> {
-  const pages = await capture(kind);
-  if (!pages.length) {
+async function collectFromCapture(
+  capture: CaptureCollection,
+  kind: 'likes' | 'favorites',
+  onProgress?: (value: SyncProgress) => void,
+): Promise<VideoItem[]> {
+  let pages = 0;
+  const liveSeen = new Set<string>();
+  const captured = await capture(kind, (page) => {
+    pages += 1;
+    try {
+      for (const item of parseVideoItems(page.body, page.status)) liveSeen.add(item.id);
+    } catch {
+      /* ignore live-count errors; the authoritative pass below reports them */
+    }
+    onProgress?.({ stage: kind, received: liveSeen.size, pages });
+  });
+  if (!captured.length) {
     throw new CommentReadError('empty', kind === 'likes'
       ? '没有捕获到“我的喜欢”数据，请确认已登录抖音后重试。'
       : '没有捕获到“我的收藏”数据，请确认已登录抖音后重试。');
@@ -32,7 +47,7 @@ async function collectFromCapture(capture: CaptureCollection, kind: 'likes' | 'f
   const items: VideoItem[] = [];
   const seen = new Set<string>();
   let lastError: unknown = null;
-  for (const page of pages) {
+  for (const page of captured) {
     let list: VideoItem[];
     try {
       list = parseVideoItems(page.body, page.status);
@@ -53,9 +68,13 @@ export type SyncResult = { liked: number; saved: number };
 export async function syncDouyinLibrary(
   captureCollection: CaptureCollection,
   importCollection: (file: LibraryImport) => Promise<unknown>,
+  onProgress?: (value: SyncProgress) => void,
+  shouldStop?: () => boolean,
 ): Promise<SyncResult> {
-  const likes = await collectFromCapture(captureCollection, 'likes');
-  const favorites = await collectFromCapture(captureCollection, 'favorites');
+  const likes = await collectFromCapture(captureCollection, 'likes', onProgress);
+  if (shouldStop?.()) throw new Error('已取消更新。');
+  const favorites = await collectFromCapture(captureCollection, 'favorites', onProgress);
+  if (shouldStop?.()) throw new Error('已取消更新。');
   const exportedAt = Date.now();
   if (likes.length) {
     await importCollection({

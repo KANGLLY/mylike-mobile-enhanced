@@ -107,12 +107,24 @@ function statusCodeOf(payload: Record<string, unknown>): string {
 }
 function commentAttachments(row: Record<string, unknown>): CommentAttachment[] {
   const out: CommentAttachment[] = [];
-  const imageList = Array.isArray(row.image_list) ? row.image_list : [];
-  for (const value of imageList) {
+  const pushValue = (value: unknown) => {
     const item = record(value);
-    const list = item && Array.isArray(item.url_list) ? item.url_list : Array.isArray(value) ? value : [];
-    const url = firstHttps(list);
-    if (url) out.push({ url, type: 'image' });
+    const candidates: unknown[] = [
+      item?.animated_url, item?.animation_url, item?.animate_url, item?.dynamic_url, item?.gif_url,
+      item?.origin_url, item?.sticker_url, item?.emoji_url, item?.image_url, item?.static_url,
+      item?.display_image, item?.thumb_url, item?.thumbnail,
+      ...(item && Array.isArray(item.url_list) ? item.url_list : []),
+      ...(Array.isArray(value) ? value : []),
+    ];
+    const url = firstHttps(candidates.filter((v): v is string => typeof v === 'string'));
+    if (url && !out.some((a) => a.url === url)) out.push({ url, type: 'image' });
+  };
+  const imageList = Array.isArray(row.image_list) ? row.image_list : [];
+  for (const value of imageList) { pushValue(value); if (out.length >= 9) break; }
+  const stickerFields = [row.sticker, row.sticker_info, row.emoji, row.emoji_info, row.sticker_list, row.emoji_detail_list];
+  for (const field of stickerFields) {
+    const arr = Array.isArray(field) ? field : field ? [field] : [];
+    for (const value of arr) { pushValue(value); if (out.length >= 9) break; }
     if (out.length >= 9) break;
   }
   return out;

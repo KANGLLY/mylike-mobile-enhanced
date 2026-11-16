@@ -60,7 +60,8 @@ export type DouyinSessionValue = {
   checkLogin: (silent?: boolean) => Promise<boolean>;
   logout: () => Promise<void>;
   request: (operation: BridgeOperation, parameters: Record<string, string>, timeoutMs?: number) => Promise<BridgeResult>;
-  captureCollection: (kind: 'likes' | 'favorites') => Promise<CapturePage[]>;
+  captureCollection: (kind: 'likes' | 'favorites', onPage?: (page: CapturePage) => void) => Promise<CapturePage[]>;
+  cancelCapture: () => void;
 };
 
 const fallback: DouyinSessionValue = {
@@ -68,6 +69,7 @@ const fallback: DouyinSessionValue = {
   openLogin: () => {}, closeLogin: () => {}, completeLogin: async () => false, checkLogin: async () => false, logout: async () => {},
   request: async () => { throw new CommentReadError('bridge', '评论服务尚未就绪。'); },
   captureCollection: async () => [],
+  cancelCapture: () => {},
 };
 const SessionContext = createContext<DouyinSessionValue>(fallback);
 export function useDouyinSession(): DouyinSessionValue { return useContext(SessionContext); }
@@ -100,7 +102,7 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
   const [loginDebug, setLoginDebug] = useState('');
   const [resetKey, setResetKey] = useState(0);
   const [capture, setCapture] = useState<{ kind: 'likes' | 'favorites'; nonce: number } | null>(null);
-  const capRef = useRef<{ kind: 'likes' | 'favorites'; pages: CapturePage[]; seen: Set<string>; done: boolean } | null>(null);
+  const capRef = useRef<{ kind: 'likes' | 'favorites'; pages: CapturePage[]; seen: Set<string>; done: boolean; onPage?: (page: CapturePage) => void } | null>(null);
   const capSeq = useRef(0);
   const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const capIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -151,15 +153,17 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
     const key = `${status}|${body.length}|${body.slice(0, 48)}`;
     if (state.seen.has(key)) return;
     state.seen.add(key);
-    state.pages.push({ status, body });
+    const page = { status, body };
+    state.pages.push(page);
+    try { state.onPage?.(page); } catch { /* progress callback must never break capture */ }
     if (capIdle.current) clearTimeout(capIdle.current);
     capIdle.current = setTimeout(() => { capFinish.current?.(); }, 7_000);
   }, []);
 
-  const captureCollection = useCallback((kind: 'likes' | 'favorites'): Promise<CapturePage[]> => {
+  const captureCollection = useCallback((kind: 'likes' | 'favorites', onPage?: (page: CapturePage) => void): Promise<CapturePage[]> => {
     return new Promise<CapturePage[]>(resolve => {
       capSeq.current += 1;
-      const state = { kind, pages: [] as CapturePage[], seen: new Set<string>(), done: false };
+      const state = { kind, pages: [] as CapturePage[], seen: new Set<string>(), done: false, onPage };
       capRef.current = state;
       if (capTimer.current) clearTimeout(capTimer.current);
       if (capIdle.current) clearTimeout(capIdle.current);
@@ -178,6 +182,8 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
       setCapture({ kind, nonce: capSeq.current });
     });
   }, []);
+
+  const cancelCapture = useCallback(() => { capFinish.current?.(); }, []);
 
   const request = useCallback(async (operation: BridgeOperation, parameters: Record<string, string>, timeoutMs = 15_000): Promise<BridgeResult> => {
     await ensureBridge();
@@ -268,8 +274,8 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<DouyinSessionValue>(() => ({
     mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname,
-    openLogin, closeLogin, completeLogin, checkLogin, logout, request, captureCollection,
-  }), [mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname, openLogin, closeLogin, completeLogin, checkLogin, logout, request, captureCollection]);
+    openLogin, closeLogin, completeLogin, checkLogin, logout, request, captureCollection, cancelCapture,
+  }), [mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname, openLogin, closeLogin, completeLogin, checkLogin, logout, request, captureCollection, cancelCapture]);
 
   return <SessionContext.Provider value={value}>
     {children}

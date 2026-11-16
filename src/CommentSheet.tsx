@@ -6,6 +6,7 @@ import Animated, { cancelAnimation, useAnimatedScrollHandler, useAnimatedStyle, 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { scheduleOnRN } from 'react-native-worklets';
 import { mediaHeaders } from './douyin';
+import { loadEmojiMap } from './douyin-emoji';
 import { parseCommentList, type FullComment } from './douyin-bridge';
 import { cachedGuestComments, fetchGuestCommentPreview, type GuestComment, type GuestCommentPreview } from './guest-comments';
 import { useDouyinSession } from './mobile/douyin-session';
@@ -13,6 +14,28 @@ import { useMobile } from './mobile/context';
 
 function formatLikes(value: number): string {
   return value >= 10000 ? `${(value / 10000).toFixed(1)}万` : String(value);
+}
+
+const EMOJI_SPLIT = /(\[[^\]\n]{1,8}\])/g;
+// Renders comment text, swapping Douyin's inline "[微笑]" tokens for the real
+// emoji images once the catalogue has loaded; falls back to plain text offline.
+function RichText({ text, style, numberOfLines, selectable }: { text: string; style: object; numberOfLines?: number; selectable?: boolean }) {
+  const [map, setMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let alive = true;
+    void loadEmojiMap().then(value => { if (alive) setMap(value); });
+    return () => { alive = false; };
+  }, []);
+  if (!Object.keys(map).length) {
+    return <Text selectable={selectable} numberOfLines={numberOfLines} style={style}>{text}</Text>;
+  }
+  return <Text selectable={selectable} numberOfLines={numberOfLines} style={style}>
+    {text.split(EMOJI_SPLIT).map((part, index) => {
+      const uri = map[part];
+      if (uri) return <Image key={index} source={{ uri, headers: mediaHeaders }} style={{ width: 18, height: 18 }} />;
+      return part ? <Text key={index}>{part}</Text> : null;
+    })}
+  </Text>;
 }
 
 // Two palettes for the comment sheet. The dark one is the original Douyin-like
@@ -84,7 +107,7 @@ const GuestCommentRow = memo(function GuestCommentRow({ item }: { item: GuestCom
   const meta = [item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '', item.region].filter(Boolean).join(' · ');
   return <View style={styles.row}>
     {item.avatar && !failed ? <Image source={{ uri: item.avatar, headers: mediaHeaders }} style={styles.avatar} onError={() => setFailed(true)} /> : <View style={styles.avatar} />}
-    <View style={styles.body}><Text style={styles.name}>{item.nickname}</Text><Text selectable numberOfLines={expanded ? undefined : 6} style={styles.text}>{item.text}</Text>
+    <View style={styles.body}><Text style={styles.name}>{item.nickname}</Text><RichText text={item.text} style={styles.text} numberOfLines={expanded ? undefined : 6} selectable />
       {item.text.length > 160 && <Pressable accessibilityRole="button" onPress={() => setExpanded(value => !value)} hitSlop={5}><Text style={styles.reply}>{expanded ? '收起' : '展开'}</Text></Pressable>}
       {!!meta && <Text style={styles.meta}>{meta}</Text>}
       {!!item.replyCount && <Text style={styles.reply}>{item.replyCount} 条回复 · 游客暂不可读取</Text>}
@@ -103,7 +126,7 @@ const FullCommentRow = memo(function FullCommentRow({ item, depth, repliesOpen, 
     {item.avatar && !failed ? <Image source={{ uri: item.avatar, headers: mediaHeaders }} style={[styles.avatar, depth > 0 && styles.replyAvatar]} onError={() => setFailed(true)} /> : <View style={[styles.avatar, depth > 0 && styles.replyAvatar]} />}
     <View style={styles.body}>
       <Text style={[styles.name, depth > 0 && styles.replyName]}>{item.nickname}</Text>
-      <Text selectable numberOfLines={expanded ? undefined : 6} style={[styles.text, depth > 0 && styles.replyText]}>{item.text}</Text>
+      <RichText text={item.text} style={[styles.text, depth > 0 && styles.replyText]} numberOfLines={expanded ? undefined : 6} selectable />
       {item.text.length > 160 && <Pressable accessibilityRole="button" onPress={() => setExpanded(value => !value)} hitSlop={5}><Text style={styles.reply}>{expanded ? '收起' : '展开'}</Text></Pressable>}
       {item.attachments.length > 0 && <View style={styles.attachments}>{item.attachments.map(attachment => <Image key={attachment.url} source={{ uri: attachment.url, headers: mediaHeaders }} style={styles.attachment} resizeMode="cover" />)}</View>}
       <View style={styles.metaRow}>
