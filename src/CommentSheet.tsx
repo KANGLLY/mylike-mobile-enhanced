@@ -50,13 +50,14 @@ type ListRow =
   | { key: string; type: 'reply'; item: FullComment }
   | { key: string; type: 'moreReplies'; comment: FullComment; loading: boolean }
   | { key: string; type: 'replyEmpty'; comment: FullComment; diag?: string }
+  | { key: string; type: 'replyVerify'; comment: FullComment; diag?: string }
   | { key: string; type: 'replyError'; comment: FullComment; error: string };
 
-type ReplyState = { items: FullComment[]; cursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string; diag: string };
+type ReplyState = { items: FullComment[]; cursor: string | null; hasMore: boolean; loading: boolean; loaded: boolean; error: string; diag: string; needVerify: boolean };
 
 export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
   const insets = useSafeAreaInsets();
-  const { request, loggedIn, openLogin, checkLogin, loginDebug } = useDouyinSession();
+  const { request, loggedIn, openLogin, checkLogin, loginDebug, openVerify } = useDouyinSession();
   const [result, setResult] = useState<GuestCommentPreview | null>(() => cachedGuestComments(workId));
   const [error, setError] = useState(''); const [refreshing, setRefreshing] = useState(false); const [attempt, setAttempt] = useState(0);
   const [fullComments, setFullComments] = useState<FullComment[]>([]); const [fullCursor, setFullCursor] = useState<string | null>(null);
@@ -106,7 +107,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   // back empty or errors.
   const loadReplies = useCallback(async (comment: FullComment, cursor: string, append: boolean) => {
     setReplyState(previous => {
-      const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '', diag: '' } as ReplyState;
+      const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '', diag: '', needVerify: false } as ReplyState;
       return { ...previous, [comment.id]: { ...base, loading: true, error: '' } };
     });
     try {
@@ -136,17 +137,17 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
       if (!page) throw new Error('回复读取失败，请重试。');
       const resolved = page;
       setReplyState(previous => {
-        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, error: '', loading: false, diag: '' } as ReplyState;
+        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, error: '', loading: false, diag: '', needVerify: false } as ReplyState;
         const seen = new Set(base.items.map(item => item.id));
         const merged = append ? base.items.slice() : [];
         if (!append) seen.clear();
         for (const item of resolved.items) if (!seen.has(item.id)) { merged.push(item); seen.add(item.id); }
-        return { ...previous, [comment.id]: { items: merged, cursor: resolved.nextCursor, hasMore: resolved.hasMore, loaded: true, loading: false, error: '', diag } };
+        return { ...previous, [comment.id]: { items: merged, cursor: resolved.nextCursor, hasMore: resolved.hasMore, loaded: true, loading: false, error: '', diag, needVerify: !append && resolved.items.length === 0 && !resolved.hasMore } };
       });
     } catch (failure) {
       const message = failure instanceof Error ? failure.message : '回复读取失败，请重试。';
       setReplyState(previous => {
-        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '', diag: '' } as ReplyState;
+        const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '', diag: '', needVerify: false } as ReplyState;
         return { ...previous, [comment.id]: { ...base, loading: false, error: message } };
       });
     }
@@ -168,7 +169,9 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
       if (state?.items.length) for (const reply of state.items) out.push({ key: `${comment.id}_${reply.id}`, type: 'reply', item: reply });
       if (state?.error) out.push({ key: `${comment.id}_err`, type: 'replyError', comment, error: state.error });
       else if (state?.hasMore && state.cursor) out.push({ key: `${comment.id}_more`, type: 'moreReplies', comment, loading: state.loading });
-      else if (state?.loaded && state.items.length === 0) out.push({ key: `${comment.id}_empty`, type: 'replyEmpty', comment, diag: state?.diag });
+      else if (state?.loaded && state.items.length === 0) out.push(state.needVerify
+        ? { key: `${comment.id}_verify`, type: 'replyVerify', comment, diag: state?.diag }
+        : { key: `${comment.id}_empty`, type: 'replyEmpty', comment, diag: state?.diag });
     }
     return out;
   }, [fullComments, repliesOpen, replyState]);
@@ -243,6 +246,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
             if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} />;
             if (item.type === 'moreReplies') return <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true)} style={styles.replyMore}><Text style={styles.retry}>{item.loading ? '正在读取更多回复…' : '加载更多回复'}</Text></Pressable>;
             if (item.type === 'replyEmpty') return <Text style={styles.replyEmpty}>暂无可见回复{item.diag ? `（${item.diag}）` : ''}</Text>;
+            if (item.type === 'replyVerify') return <Pressable accessibilityRole="button" onPress={() => openVerify(`https://www.douyin.com/video/${workId}`, ok => { if (ok) void loadReplies(item.comment, '0', false); })} style={styles.replyError}><Text style={styles.meta}>楼中楼回复需要先完成抖音安全验证{item.diag ? `（${item.diag}）` : ''}</Text><Text style={styles.retry}>点按打开验证页</Text></Pressable>;
             return <Pressable accessibilityRole="button" onPress={() => void loadReplies(item.comment, '0', false)} style={styles.replyError}><Text style={styles.meta}>回复读取失败：{item.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>;
           }} /></GestureDetector> : null}
       </>
