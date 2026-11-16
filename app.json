@@ -16,7 +16,7 @@
       "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icons/android/classic-fg.png",
-        "backgroundColor": "#fc2f56"
+        "backgroundColor": "#2A2028"
       }
     },
     "plugins": [
@@ -32,7 +32,7 @@
         {
           "classic": {
             "ios": "./assets/icons/ios/classic.png",
-            "android": { "foregroundImage": "./assets/icons/android/classic-fg.png", "backgroundColor": "#fc2f56" }
+            "android": { "foregroundImage": "./assets/icons/android/classic-fg.png", "backgroundColor": "#2A2028" }
           },
           "midnight": {
             "ios": "./assets/icons/ios/midnight.png",

@@ -16,6 +16,7 @@ import {
   buildBridgeScript, CommentReadError, parseBridgeMessage, parseSelf,
   type BridgeOperation, type BridgeResult,
 } from '../douyin-bridge';
+import { clearWebViewCookies } from './home-icon';
 
 const DESKTOP_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
@@ -39,12 +40,13 @@ export type DouyinSessionValue = {
   closeLogin: () => void;
   completeLogin: () => Promise<boolean>;
   checkLogin: (silent?: boolean) => Promise<boolean>;
+  logout: () => Promise<void>;
   request: (operation: BridgeOperation, parameters: Record<string, string>, timeoutMs?: number) => Promise<BridgeResult>;
 };
 
 const fallback: DouyinSessionValue = {
   mounted: false, loggedIn: false, checking: false, loginVisible: false, loginError: '', loginDebug: '', nickname: '',
-  openLogin: () => {}, closeLogin: () => {}, completeLogin: async () => false, checkLogin: async () => false,
+  openLogin: () => {}, closeLogin: () => {}, completeLogin: async () => false, checkLogin: async () => false, logout: async () => {},
   request: async () => { throw new CommentReadError('bridge', '评论服务尚未就绪。'); },
 };
 const SessionContext = createContext<DouyinSessionValue>(fallback);
@@ -76,6 +78,7 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
   const [loginVisible, setLoginVisible] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [loginDebug, setLoginDebug] = useState('');
+  const [resetKey, setResetKey] = useState(0);
 
   const ensureBridge = useCallback((): Promise<void> => {
     if (!ready.current) {
@@ -164,6 +167,13 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
 
   const closeLogin = useCallback(() => setLoginVisible(false), []);
 
+  const logout = useCallback(async () => {
+    setLoggedIn(false); setNickname(''); setLoginError(''); setLoginDebug(''); setLoginVisible(false);
+    try { await clearWebViewCookies(); } catch { /* 清 cookie 失败也重置本地状态 */ }
+    ready.current = null;
+    setResetKey(key => key + 1);
+  }, []);
+
   const completeLogin = useCallback(async (): Promise<boolean> => {
     setLoginError('');
     setChecking(true);
@@ -192,13 +202,14 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<DouyinSessionValue>(() => ({
     mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname,
-    openLogin, closeLogin, completeLogin, checkLogin, request,
-  }), [mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname, openLogin, closeLogin, completeLogin, checkLogin, request]);
+    openLogin, closeLogin, completeLogin, checkLogin, logout, request,
+  }), [mounted, loggedIn, checking, loginVisible, loginError, loginDebug, nickname, openLogin, closeLogin, completeLogin, checkLogin, logout, request]);
 
   return <SessionContext.Provider value={value}>
     {children}
     {mounted && <View style={loginVisible ? styles.overlay : styles.hidden} pointerEvents={loginVisible ? 'auto' : 'none'} accessibilityElementsHidden={!loginVisible} importantForAccessibility={loginVisible ? 'auto' : 'no-hide-descendants'}>
       <WebView
+        key={resetKey}
         ref={webRef}
         source={{ uri: LOGIN_URL }}
         userAgent={DESKTOP_UA}

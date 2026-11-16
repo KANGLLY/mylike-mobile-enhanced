@@ -7,12 +7,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cacheUsage, clearPlaybackCache, bytesLabel } from './cache';
 import { useMobile } from './context';
+import { useDouyinSession } from './douyin-session';
 import type { MobileStore } from './store';
 import { PageHeader, ui } from './ui';
 
 type Usage = { overview: Awaited<ReturnType<MobileStore['accountOverview']>>; database: number; cache: ReturnType<typeof cacheUsage> };
 const ICON_OPTIONS: { name: string; label: string; color: string }[] = [
-  { name: 'classic', label: '经典红', color: '#fc2f56' },
+  { name: 'classic', label: '经典', color: '#2A2028' },
   { name: 'midnight', label: '午夜黑', color: '#16161a' },
   { name: 'sakura', label: '樱花粉', color: '#ff5c96' },
   { name: 'ocean', label: '深海蓝', color: '#2f6bff' },
@@ -26,6 +27,7 @@ function Row({ title, detail, children, onPress, disabled = false, danger = fals
 }
 export function SettingsScreen({ onBack }: { onBack: () => void }) {
   const { clear, store, nickname, changed, preferences, setPreferences } = useMobile();
+  const { loggedIn: douyinLoggedIn, nickname: douyinNickname, openLogin: openDouyinLogin, logout: logoutDouyin, checking: douyinChecking } = useDouyinSession();
   const [busy, setBusy] = useState(false); const [inspecting, setInspecting] = useState(true); const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState(''); const [dataError, setDataError] = useState(''); const [notice, setNotice] = useState('');
   const [icon, setIcon] = useState<string>('DEFAULT');
@@ -88,6 +90,13 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
       <Row title="清理缓存" detail="所有账号共用的临时缓存；保留内容、标记和进度。" disabled={busy} onPress={() => { void action(async () => { const result = clearPlaybackCache(); return result.failed ? `缓存已清理；${result.failed} 个临时文件暂不可删除，可稍后重试。` : '缓存已清理'; }); }}><Text style={ui.muted}>{usage ? bytesLabel(usage.cache.bytes) : '—'}</Text></Row>
       {!!dataError && <Row title={inspecting ? '正在读取…' : '重新检查数据占用'} disabled={busy || inspecting} onPress={() => { void inspect(); }} />}
     </Section>
+    <Section title="抖音账号">
+      <Row title={douyinLoggedIn ? `已登录${douyinNickname ? ` · ${douyinNickname}` : ''}` : '未登录'} detail={douyinLoggedIn ? '评论、楼中楼、点赞与收藏同步都使用此登录态' : '登录抖音后才能看完整评论、同步点赞和收藏'}>
+        <Ionicons name={douyinLoggedIn ? 'checkmark-circle' : 'alert-circle'} size={20} color={douyinLoggedIn ? '#3ddc84' : '#e8c477'} />
+      </Row>
+      <Row title={douyinLoggedIn ? '重新登录' : '登录抖音'} detail={douyinChecking ? '检测中…' : (douyinLoggedIn ? '更换账号或刷新登录状态' : '打开抖音扫码登录')} disabled={douyinChecking} onPress={openDouyinLogin} />
+      {douyinLoggedIn && <Row title="退出登录" detail="清除本机抖音登录状态" danger disabled={douyinChecking} onPress={() => { void logoutDouyin(); }} />}
+    </Section>
     <Section title="外观">
       <Row title="评论区背景" detail={preferences.commentTheme === 'light' ? '浅色（白天模式）' : '深色（夜间模式）'} onPress={() => { void setPreferences({ commentTheme: preferences.commentTheme === 'light' ? 'dark' : 'light' }); }}>
         <Text style={ui.text}>{preferences.commentTheme === 'light' ? '浅色' : '深色'}</Text>
@@ -98,7 +107,7 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
       {ICON_OPTIONS.map(option => <Row key={option.name} title={option.label} detail={icon === option.name ? '当前使用中' : '点按切换到该图标'} disabled={busy} onPress={() => { void pickIcon(option.name); }}>
         {icon === option.name ? <Ionicons name="checkmark-circle" size={22} color="#3ddc84" /> : <View style={[styles.swatch, { backgroundColor: option.color }]} />}
       </Row>)}
-      <Row title="恢复默认" detail="使用经典红色图标" disabled={busy} onPress={() => { void pickIcon(null); }}>
+      <Row title="恢复默认" detail="使用默认图标" disabled={busy} onPress={() => { void pickIcon(null); }}>
         {icon === 'DEFAULT' ? <Ionicons name="checkmark-circle" size={22} color="#3ddc84" /> : <Ionicons name="refresh" size={20} color="#8a8f9a" />}
       </Row>
       <Row title="上传自定义图标" detail="从相册/文件选一张图，生成带该图标的桌面快捷方式" disabled={busy} onPress={() => { void uploadIcon(); }}><Ionicons name="cloud-upload-outline" size={20} color="#8a8f9a" /></Row>

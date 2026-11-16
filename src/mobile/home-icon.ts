@@ -1,6 +1,6 @@
 import { requireNativeModule } from 'expo';
 
-let nativeModule: { pinHomeShortcut: (name: string, base64: string) => Promise<boolean> } | null = null;
+let nativeModule: { pinHomeShortcut: (name: string, base64: string) => Promise<boolean>; clearCookies: () => Promise<boolean> } | null = null;
 try {
   nativeModule = requireNativeModule('HomeIcon');
 } catch {
@@ -17,4 +17,10 @@ export async function pinHomeShortcut(name: string, base64: string): Promise<boo
 
 export function hasHomeIcon(): boolean {
   return Boolean(nativeModule);
+}
+
+// Clear the WebView cookie jar so "退出登录" actually drops the Douyin session.
+export async function clearWebViewCookies(): Promise<boolean> {
+  if (!nativeModule) return false;
+  try { return await nativeModule.clearCookies(); } catch { return false; }
 }

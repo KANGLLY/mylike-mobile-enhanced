@@ -13,7 +13,7 @@ import { PageHeader, ui } from './ui';
 export function MoreScreen({ onBack, onManage, onImport, onOpen, visible }: { onBack: () => void; onManage: (page: 'history' | 'settings') => void; onImport: () => void; onOpen: OpenQueue; visible: boolean }) {
   const [folders, setFolders] = useState(false);
   const { store, changed } = useMobile();
-  const { request, loggedIn, openLogin } = useDouyinSession();
+  const { request, openLogin, checkLogin } = useDouyinSession();
   const [syncing, setSyncing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const doExport = async () => {
@@ -28,9 +28,15 @@ export function MoreScreen({ onBack, onManage, onImport, onOpen, visible }: { on
   };
   const sync = async () => {
     if (syncing) return;
-    if (!loggedIn) { openLogin(); return; }
     setSyncing(true);
     try {
+      // 先复检登录态：重启后 cookie 可能还在，但内存 loggedIn 已重置为 false。
+      const ok = await checkLogin(true);
+      if (!ok) {
+        openLogin();
+        Alert.alert('需要登录', '请先在弹出的页面登录抖音，登录成功后再点一次“从抖音更新点赞和收藏”。');
+        return;
+      }
       const result = await syncDouyinLibrary((operation, parameters) => request(operation, parameters), store.importCollection);
       changed();
       Alert.alert('已更新', `点赞 ${result.liked} 条，收藏 ${result.saved} 条已同步到本机。`);
