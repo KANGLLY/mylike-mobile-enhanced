@@ -105,26 +105,45 @@ function statusCodeOf(payload: Record<string, unknown>): string {
   const nested = record(raw)?.StatusCode ?? raw;
   return nested == null ? '' : String(nested);
 }
+// Douyin image comments nest the real URL inside objects like
+// { origin_url: { url_list: [...] }, thumb_url: { url_list: [...] } }.
+// Walk those objects (preferring the full-size origin_url) instead of only
+// looking at top-level strings, otherwise image comments lose their pictures.
 function commentAttachments(row: Record<string, unknown>): CommentAttachment[] {
   const out: CommentAttachment[] = [];
-  const pushValue = (value: unknown) => {
+  const URL_KEYS = [
+    'origin_url', 'display_image', 'thumb_url', 'thumbnail', 'static_url', 'image_url',
+    'sticker_url', 'emoji_url', 'animated_url', 'animation_url', 'animate_url',
+    'dynamic_url', 'gif_url', 'url_list',
+  ];
+  const clean = (raw: unknown): string | undefined => {
+    if (typeof raw !== 'string') return undefined;
+    try { const url = new URL(raw); if (url.protocol === 'https:' && !url.username && !url.password) return url.href; } catch { /* ignore malformed platform URL */ }
+    return undefined;
+  };
+  const pick = (list: unknown[]): string | undefined => { for (const v of list) { const url = clean(v); if (url) return url; } return undefined; };
+  const extract = (value: unknown, depth = 0): string | undefined => {
+    if (typeof value === 'string') return clean(value);
+    if (depth > 3) return undefined;
     const item = record(value);
-    const candidates: unknown[] = [
-      item?.animated_url, item?.animation_url, item?.animate_url, item?.dynamic_url, item?.gif_url,
-      item?.origin_url, item?.sticker_url, item?.emoji_url, item?.image_url, item?.static_url,
-      item?.display_image, item?.thumb_url, item?.thumbnail,
-      ...(item && Array.isArray(item.url_list) ? item.url_list : []),
-      ...(Array.isArray(value) ? value : []),
-    ];
-    const url = firstHttps(candidates.filter((v): v is string => typeof v === 'string'));
-    if (url && !out.some((a) => a.url === url)) out.push({ url, type: 'image' });
+    if (!item) return undefined;
+    if (Array.isArray(item.url_list)) { const url = pick(item.url_list); if (url) return url; }
+    for (const key of URL_KEYS) {
+      const url = extract(item[key], depth + 1);
+      if (url) return url;
+    }
+    return undefined;
+  };
+  const add = (value: unknown) => {
+    const url = extract(value);
+    if (url && !out.some((a) => a.url === url) && out.length < 9) out.push({ url, type: 'image' });
   };
   const imageList = Array.isArray(row.image_list) ? row.image_list : [];
-  for (const value of imageList) { pushValue(value); if (out.length >= 9) break; }
-  const stickerFields = [row.sticker, row.sticker_info, row.emoji, row.emoji_info, row.sticker_list, row.emoji_detail_list];
-  for (const field of stickerFields) {
+  for (const value of imageList) { add(value); if (out.length >= 9) break; }
+  const extraFields = [row.image_comment, row.sticker, row.sticker_info, row.emoji, row.emoji_info, row.sticker_list, row.emoji_detail_list];
+  for (const field of extraFields) {
     const arr = Array.isArray(field) ? field : field ? [field] : [];
-    for (const value of arr) { pushValue(value); if (out.length >= 9) break; }
+    for (const value of arr) { add(value); if (out.length >= 9) break; }
     if (out.length >= 9) break;
   }
   return out;
