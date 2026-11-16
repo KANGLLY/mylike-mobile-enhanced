@@ -84,7 +84,7 @@ npm ci
 npm start
 ```
 
-使用支持 SDK 58 的 Expo Go 调试。普通启动和 Actions 共用首页／导入／我的入口；`npm run start:m1` 为 8083 端口的启动别名。`npm run typecheck` 检查类型，`npm test` 运行测试。维护者可在 Actions 手动运行 **Build Android test APK**，在 Artifacts 获取独立测试包。 [Expo Go](https://expo.dev/go) · [构建工作流](https://github.com/Hannah2227/mylike-mobile/actions)
+使用支持 SDK 58 的 Expo Go 调试。普通启动和 Actions 共用首页／导入／我的入口；`npm run start:m1` 为 8083 端口的启动别名。`npm run typecheck` 检查类型，`npm test` 运行测试。维护者可在 Actions 手动运行 **Build Android test APK**，在 Artifacts 获取独立测试包。 [Expo Go](https://expo.dev/go) · [构建工作流](https://github.com/KANGLLY/mylike-mobile-enhanced/actions)
 
 ## 免责声明
 
