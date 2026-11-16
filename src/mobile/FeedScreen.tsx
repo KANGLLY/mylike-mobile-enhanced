@@ -14,8 +14,8 @@ import { MediaSlot, type MediaControl, type MediaInfo } from './Media';
 import { rates, type Scope, type Session, type Source } from './model';
 import { SeekRail } from './SeekRail';
 import { DanmakuOverlay } from './Danmaku';
-import * as ScreenOrientation from 'expo-screen-orientation';
 import { saveWorkMedia, type SaveKind } from './save-media';
+import { FullscreenVideo } from './FullscreenVideo';
 
 import { FolderSheet } from './FolderSheet';
 import { feedChrome, mediaAreaHeight } from './layout';
@@ -73,7 +73,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   const [comments, setComments] = useState(false); const [panel, setPanel] = useState<'options' | 'queue' | 'share' | null>(null); const [avatarFailed, setAvatarFailed] = useState(false);
   const [commentsClosing, setCommentsClosing] = useState(false); const [commentCloseRequest, setCommentCloseRequest] = useState(0);
   const [groupId, setGroupId] = useState<string | null>(null);
-  const [landscape, setLandscape] = useState(false); const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState(false); const [fullscreen, setFullscreen] = useState(false);
   const [foreground, setForeground] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
   const x = useSharedValue(0); const photoX = useSharedValue(0); const mediaHeight = useSharedValue(height); const heart = useSharedValue(0);
   const mediaTargetHeight = comments && !commentsClosing ? height * 0.3 : playbackHeight;
@@ -96,6 +96,9 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   const requestedPhoto = photoPage?.id === id ? photoPage.index : session?.point?.kind === 'gallery' ? session.point.value : 0;
   const photo = current.data && 'images' in current.data ? Math.max(0, Math.min(current.photos - 1, requestedPhoto)) : requestedPhoto;
   const gallery = current.data ? 'images' in current.data : current.work?.kind !== 'video' && Boolean(current.work);
+  const videoUri = current.data && 'candidates' in current.data ? current.data.candidates[0] ?? '' : '';
+  const videoSize = current.data && 'candidates' in current.data ? current.data.size : undefined;
+  const landscapeVideo = Boolean(videoUri && videoSize && videoSize.width > videoSize.height);
   const boostable = !gallery || current.hasLive;
   const boosted = playbackStateId.current === id && (edgeHeld || boostLocked) && boostable;
   const mediaPaused = playbackStateId.current === id && paused && !(edgeHeld && boostable);
@@ -115,7 +118,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   useLayoutEffect(() => {
     playbackStateId.current = id;
     setPaused(false); setEdgeHeld(false); setBoostLocked(false); setBoostTarget(false); setPinching(false); setSeeking(false); setReadyId(''); setAvatarFailed(false); setTime({ seconds: 0, duration: 0 });
-    setPrepared(false);
+    setPrepared(false); setFullscreen(false);
   }, [id]);
   useEffect(() => { const subscription = AppState.addEventListener('change', state => { setForeground(state === 'active'); if (state !== 'active') { setEdgeHeld(false); setBoostLocked(false); setBoostTarget(false); setPinching(false); } }); return () => subscription.remove(); }, []);
   useEffect(() => { if (!visible || !focused) { setComments(false); setPanel(null); setEdgeHeld(false); setBoostLocked(false); setBoostTarget(false); setPinching(false); setGroupId(null); } }, [visible, focused]);
@@ -187,13 +190,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
     if (pending === id && preferences.auto && !next()) setPaused(true);
   }, [pinching, moving, playing, paused, id, preferences.auto, next]);
   function retry() { setPaused(false); control.current?.retry(); }
-  async function toggleLandscape() {
-    const next = !landscape;
-    try {
-      await ScreenOrientation.lockAsync(next ? ScreenOrientation.OrientationLock.LANDSCAPE : ScreenOrientation.OrientationLock.PORTRAIT_UP);
-      setLandscape(next);
-    } catch { /* orientation lock can be rejected while another screen owns it */ }
-  }
+  const closeFullscreen = useCallback(() => { setFullscreen(false); setPaused(false); }, []);
   async function doSave(kind: SaveKind) {
     if (!current.data || saving) return;
     setSaving(true);
@@ -201,7 +198,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
     catch (failure) { Alert.alert('保存失败', failure instanceof Error ? failure.message : '请稍后重试。'); }
     finally { setSaving(false); }
   }
-  useEffect(() => () => { void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); }, []);
+  useEffect(() => { if (!visible || !focused) { setFullscreen(false); } }, [visible, focused]);
   const author = current.data?.author || current.work?.author || '未知作者';
   const authorGroup = current.work?.author || author;
   const countLabel = (value: number | undefined, fallback: string) => value === undefined ? fallback : value >= 10000 ? `${(value / 10000).toFixed(1)}万` : String(value);
@@ -229,6 +226,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
         <View style={styles.tool}><IconButton name="star" label="切换本机收藏，长按管理收藏夹" size={34} color={saved ? '#ffc345' : '#fff'} onPress={() => { if (current.work) setMark(id, 'saved', !saved); }} onLongPress={() => { if (current.work) setGroupId(id); }} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.favorites, '收藏')}</Text></View>
         <View style={styles.tool}><IconButton name="arrow-redo" label="分享公开作品链接" size={33} onPress={() => setPanel('share')} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.shares, '分享')}</Text></View>
       </View>
+      {landscapeVideo && <Pressable accessibilityRole="button" accessibilityLabel="全屏观看" onPress={() => { setPaused(true); setFullscreen(true); }} style={[styles.fullscreenBtn, { bottom: chrome.bottom + 46 }]}><Ionicons name="scan-outline" size={15} color="#fff" /><Text style={styles.fullscreenText}>全屏观看</Text></Pressable>}
       {gallery && current.photos > 1 && <Text style={[styles.photo, { top: chrome.top + 70, right: Math.max(20, insets.right) }]}>{photo + 1} / {current.photos}</Text>}
       {gallery && current.photos > 1 && <View pointerEvents="none" style={[styles.segments, { bottom: chrome.bottom + 7 }]}>{Array.from({ length: Math.min(current.photos, 20) }, (_, index) => <View key={index} style={[styles.segment, index <= photo && styles.segmentActive]} />)}</View>}
     </>}
@@ -270,6 +268,12 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
         {comments && id && <CommentSheet key={id} workId={id} height={height * 0.7} closeRequest={commentCloseRequest} onClosing={beginCommentClose} onClose={closeComments} />}
       </GestureHandlerRootView>
     </Modal>
+    <Modal transparent visible={fullscreen} animationType="fade" onRequestClose={closeFullscreen}>
+      <View style={styles.fsRoot}>
+        <FullscreenVideo uri={videoUri} startSeconds={time.seconds} rate={preferences.rate} onClose={closeFullscreen} />
+        <Pressable accessibilityRole="button" accessibilityLabel="退出全屏" onPress={closeFullscreen} style={[styles.fsClose, { top: insets.top + 8, right: Math.max(8, insets.right) }]}><Ionicons name="close" size={26} color="#fff" /></Pressable>
+      </View>
+    </Modal>
     <ActionSheet visible={panel !== null} title={panel === 'queue' ? '播放队列' : panel === 'share' ? '分享作品' : '播放选项'} onClose={() => setPanel(null)}>
           {panel === 'queue' ? <><View style={styles.panelHeading}><Text style={ui.title}>播放队列 · {session?.ids.length ?? 0}</Text><Button title="返回" onPress={() => setPanel('options')} /></View>
             <FlatList data={session?.ids ?? []} initialNumToRender={12} keyExtractor={item => item} style={{ maxHeight: height * 0.5 }}
@@ -280,7 +284,6 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
             <Button title={preferences.danmaku ? '弹幕：开' : '弹幕：关'} selected={preferences.danmaku} onPress={() => setPreferences({ danmaku: !preferences.danmaku })} />
             <Button title="播放队列" onPress={() => setPanel('queue')} /><Button title="重新打乱" onPress={() => { setPanel(null); reshuffle(); }} /><Button title="重新取链" onPress={() => { setPanel(null); retry(); }} />
           </View><View style={styles.options}>
-            <Button title={landscape ? '横屏播放：开' : '横屏播放：关'} selected={landscape} onPress={() => { void toggleLandscape(); }} />
             {current.data && 'candidates' in current.data && current.data.candidates.length > 0 && <Button title={saving ? '保存中…' : '保存视频'} disabled={saving} onPress={() => { void doSave('video'); }} />}
             {current.data && 'images' in current.data && current.data.images.length > 0 && <Button title={saving ? '保存中…' : '保存图片'} disabled={saving} onPress={() => { void doSave('images'); }} />}
             {current.data && current.data.musicCandidates && current.data.musicCandidates.length > 0 && <Button title={saving ? '保存中…' : '保存音频'} disabled={saving} onPress={() => { void doSave('audio'); }} />}
@@ -311,4 +314,6 @@ const styles = StyleSheet.create({
   failure: { position: 'absolute', top: '37%', left: 35, right: 35, alignItems: 'center', gap: 18 }, error: { position: 'absolute', top: 65, alignSelf: 'center', backgroundColor: '#222d', zIndex: 8 }, heart: { position: 'absolute', top: '40%', alignSelf: 'center', zIndex: 6 },
   authorHeader: { height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, panelHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, queueItem: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 12, marginBottom: 3, borderRadius: 5 },
+  fullscreenBtn: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#00000066' }, fullscreenText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  fsRoot: { flex: 1, backgroundColor: '#000' }, fsClose: { position: 'absolute', width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: '#00000066' },
 });
