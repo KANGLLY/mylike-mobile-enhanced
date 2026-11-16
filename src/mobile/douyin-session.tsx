@@ -98,7 +98,16 @@ export function DouyinSessionProvider({ children }: { children: ReactNode }) {
     clearTimeout(entry.timer);
     pending.current.delete(parsed.id);
     if (parsed.error === 'TIMEOUT') { entry.reject(new CommentReadError('timeout', '评论请求超时，请重试。')); return; }
-    if (parsed.error) { entry.reject(new CommentReadError('network', parsed.error === 'NETWORK_ERROR' ? '网络异常，评论读取失败。' : '评论读取失败，请重试。')); return; }
+    if (parsed.error) {
+      const detail = parsed.message ? `（${parsed.message}）` : '';
+      const message = parsed.error === 'NETWORK_ERROR'
+        ? `网络异常，评论读取失败${detail}`
+        : parsed.error === 'SCRIPT_ERROR'
+          ? `页面脚本执行失败${detail}`
+          : `评论读取失败，请重试${detail}`;
+      entry.reject(new CommentReadError('network', message));
+      return;
+    }
     entry.resolve(parsed);
   }, []);
 

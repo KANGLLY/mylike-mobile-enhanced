@@ -1,9 +1,9 @@
 // Paged, signed Douyin comment reads executed inside the real douyin.com page.
 // Pure module: no React Native imports, so the parsers run under `node --test`.
 //
-// The page-side request function is serialized and injected into a WebView that
-// has the desktop Douyin site loaded. Douyin's own page SDK signs the request
-// (a_bogus / msToken), exactly like the desktop MyLike app does.
+// The page-side request runner is embedded as a literal string and injected into
+// a WebView that has the desktop Douyin site loaded. Douyin's own page SDK signs
+// the request (a_bogus / msToken), exactly like the desktop MyLike app does.
 
 export type CommentAttachment = { url: string; type: 'image' | 'video' };
 
@@ -173,87 +173,32 @@ export type BridgeOperation = 'comments' | 'commentReplies' | 'self';
 export type BridgeRequest = { id: string; operation: BridgeOperation; parameters: Record<string, string>; timeout: number };
 export type BridgeResult = { id: string; status: number; body: string; error?: string; message?: string };
 
-// Serialized into the page's MAIN world. Must not capture module scope.
-async function contextRequestInPage(request: BridgeRequest): Promise<BridgeResult> {
-  const paths: Record<string, string> = {
-    self: '/aweme/v1/web/user/profile/self/',
-    comments: '/aweme/v1/web/comment/list/',
-    commentReplies: '/aweme/v1/web/comment/list/reply/',
-  };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), request.timeout);
-  const params = new URLSearchParams({
-    device_platform: 'webapp',
-    aid: '6383',
-    channel: 'channel_pc_web',
-    version_code: '290100',
-    version_name: '29.1.0',
-    update_version_code: '170400',
-    cookie_enabled: 'true',
-    platform: 'PC',
-  });
-  const keys = Object.keys(request.parameters || {});
-  for (let index = 0; index < keys.length; index++) params.set(keys[index]!, request.parameters[keys[index]!]!);
-
-  const commentRead = request.operation === 'comments' || request.operation === 'commentReplies';
-  const referrer = commentRead
-    ? 'https://www.douyin.com/video/' + (request.parameters.aweme_id || request.parameters.item_id || '')
-    : undefined;
-
-  if (commentRead) {
-    if (!params.has('count')) params.set('count', '20');
-    params.set('pc_client_type', '1');
-    if (typeof navigator !== 'undefined') {
-      params.set('browser_language', navigator.language);
-      params.set('browser_platform', navigator.platform);
-      params.set('browser_online', String(navigator.onLine));
-      if (navigator.hardwareConcurrency) params.set('cpu_core_num', String(navigator.hardwareConcurrency));
-      const chrome = (navigator.userAgent.match(/Chrome\/([\d.]+)/) || [])[1];
-      if (chrome) {
-        params.set('browser_name', 'Chrome');
-        params.set('browser_version', chrome);
-        params.set('engine_name', 'Blink');
-        params.set('engine_version', chrome);
-      }
-      const os = /Windows/.test(navigator.userAgent)
-        ? 'Windows'
-        : /Macintosh/.test(navigator.userAgent)
-          ? 'Mac OS'
-          : /Linux/.test(navigator.userAgent)
-            ? 'Linux'
-            : '';
-      if (os) params.set('os_name', os);
-    }
-    if (typeof screen !== 'undefined') {
-      params.set('screen_width', String(screen.width));
-      params.set('screen_height', String(screen.height));
-    }
-    try {
-      const match = document.cookie.match(/(?:^|;\s*)msToken=([^;]+)/);
-      if (match) {
-        let token = match[1] || '';
-        try { token = decodeURIComponent(token); } catch (error) { /* keep raw token */ }
-        params.set('msToken', token);
-      }
-    } catch (error) { /* the page SDK can still supply its own token */ }
-  }
-
-  try {
-    const response = await fetch('https://www.douyin.com' + paths[request.operation] + '?' + params.toString(), {
-      credentials: 'include',
-      cache: 'no-store',
-      signal: controller.signal,
-      method: 'GET',
-      ...(referrer ? { referrer } : {}),
-      headers: { accept: 'application/json, text/plain, */*' },
-    });
-    return { id: request.id, status: response.status, body: await response.text() };
-  } catch (error) {
-    return { id: request.id, status: 0, body: '', error: controller.signal.aborted ? 'TIMEOUT' : 'NETWORK_ERROR' };
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// The page-side request runner, embedded as a literal string — NOT function
+// .toString(). Under Hermes, Function.prototype.toString() yields a
+// `function f(){ [bytecode] }` placeholder, so serializing a JS function would
+// inject a broken body and every request would throw SCRIPT_ERROR. A plain
+// string survives the bundle verbatim and stays fully self-contained in the page.
+// It is written with no backslash escapes so it can live in a template literal.
+const PAGE_SCRIPT = [
+  "var PATHS={self:'/aweme/v1/web/user/profile/self/',comments:'/aweme/v1/web/comment/list/',commentReplies:'/aweme/v1/web/comment/list/reply/'};",
+  "function mylikeRequest(request){return new Promise(function(resolve){try{",
+  "var params=new URLSearchParams({device_platform:'webapp',aid:'6383',channel:'channel_pc_web',version_code:'290100',version_name:'29.1.0',update_version_code:'170400',cookie_enabled:'true',platform:'PC'});",
+  "var p=request.parameters||{};var keys=Object.keys(p);for(var i=0;i<keys.length;i++){params.set(keys[i],p[keys[i]]);}",
+  "var commentRead=request.operation==='comments'||request.operation==='commentReplies';var referrer;",
+  "if(commentRead){if(!params.has('count')){params.set('count','20');}params.set('pc_client_type','1');",
+  "params.set('browser_language',navigator.language||'');params.set('browser_platform',navigator.platform||'');params.set('browser_online',String(navigator.onLine));",
+  "if(navigator.hardwareConcurrency){params.set('cpu_core_num',String(navigator.hardwareConcurrency));}",
+  "var ua=navigator.userAgent||'';var ci=ua.indexOf('Chrome/');var chrome='';if(ci>=0){var mm=ua.substring(ci+7).match(/^[0-9.]+/);if(mm){chrome=mm[0];}}",
+  "if(chrome){params.set('browser_name','Chrome');params.set('browser_version',chrome);params.set('engine_name','Blink');params.set('engine_version',chrome);}",
+  "var os='';if(ua.indexOf('Windows')>=0){os='Windows';}else if(ua.indexOf('Macintosh')>=0){os='Mac OS';}else if(ua.indexOf('Linux')>=0){os='Linux';}if(os){params.set('os_name',os);}",
+  "if(typeof screen!=='undefined'){params.set('screen_width',String(screen.width));params.set('screen_height',String(screen.height));}",
+  "var parts=(document.cookie||'').split(';');var tk='';for(var c=0;c<parts.length;c++){var seg=parts[c];while(seg.charAt(0)===' '){seg=seg.substring(1);}if(seg.indexOf('msToken=')===0){tk=seg.substring(8);break;}}if(tk){try{tk=decodeURIComponent(tk);}catch(_e){}params.set('msToken',tk);}",
+  "referrer='https://www.douyin.com/video/'+(p.aweme_id||p.item_id||'');}",
+  "var controller=new AbortController();var timer=setTimeout(function(){try{controller.abort();}catch(_e){}},request.timeout||15000);",
+  "var opts={credentials:'include',cache:'no-store',signal:controller.signal,method:'GET',headers:{accept:'application/json, text/plain, */*'}};if(referrer){opts.referrer=referrer;}",
+  "fetch('https://www.douyin.com'+PATHS[request.operation]+'?'+params.toString(),opts).then(function(resp){return resp.text().then(function(body){clearTimeout(timer);resolve({id:request.id,status:resp.status,body:body});});}).catch(function(err){clearTimeout(timer);var aborted=err&&err.name==='AbortError';resolve({id:request.id,status:0,body:'',error:aborted?'TIMEOUT':'NETWORK_ERROR'});});",
+  "}catch(e){resolve({id:request.id,status:0,body:'',error:'SCRIPT_ERROR',message:String(e&&e.message?e.message:e)});}});}",
+].join('\n');
 
 function serialize(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
@@ -262,10 +207,7 @@ function serialize(value: unknown): string {
 export function buildBridgeScript(request: BridgeRequest): string {
   const payload = serialize(request);
   const id = serialize(request.id);
-  const post = (result: string) => `window.ReactNativeWebView.postMessage(JSON.stringify(${result}))`;
-  const ok = `{__mylike:true,id:r.id,status:r.status,body:r.body,error:r.error||''}`;
-  const failed = `{__mylike:true,id:${id},status:0,body:'',error:'SCRIPT_ERROR',message:String(e&&e.message?e.message:e)}`;
-  return `(function(){try{(${contextRequestInPage.toString()})(${payload}).then(function(r){${post(ok)};}).catch(function(e){${post(failed)};});}catch(e){${post(failed)};}})();true;`;
+  return `(function(){try{var req=${payload};function post(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(_e){}}${PAGE_SCRIPT}mylikeRequest(req).then(function(r){r=r||{};r.__mylike=true;post(r);}).catch(function(e){post({__mylike:true,id:req.id,status:0,body:'',error:'SCRIPT_ERROR',message:String(e&&e.message?e.message:e)});});}catch(e){try{window.ReactNativeWebView.postMessage(JSON.stringify({__mylike:true,id:${id},status:0,body:'',error:'SCRIPT_ERROR',message:String(e&&e.message?e.message:e)}));}catch(_e){}}})();true;`;
 }
 
 export function parseBridgeMessage(raw: string): BridgeResult | null {
