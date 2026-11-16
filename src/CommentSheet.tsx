@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector, GestureStateManager, useNativeGesture, usePanGesture, useSimultaneousGestures } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
@@ -8,6 +9,10 @@ import { mediaHeaders } from './douyin';
 import { parseCommentList, type FullComment } from './douyin-bridge';
 import { cachedGuestComments, fetchGuestCommentPreview, type GuestComment, type GuestCommentPreview } from './guest-comments';
 import { useDouyinSession } from './mobile/douyin-session';
+
+function formatLikes(value: number): string {
+  return value >= 10000 ? `${(value / 10000).toFixed(1)}万` : String(value);
+}
 
 const GuestCommentRow = memo(function GuestCommentRow({ item }: { item: GuestComment }) {
   const [failed, setFailed] = useState(false); const [expanded, setExpanded] = useState(false);
@@ -23,8 +28,8 @@ const GuestCommentRow = memo(function GuestCommentRow({ item }: { item: GuestCom
   </View>;
 });
 
-const FullCommentRow = memo(function FullCommentRow({ item, depth, onToggleReplies, loadingReplies, hasLoadedReplies }: {
-  item: FullComment; depth: number; onToggleReplies?: () => void; loadingReplies?: boolean; hasLoadedReplies?: boolean;
+const FullCommentRow = memo(function FullCommentRow({ item, depth, repliesOpen, onToggleReplies, loadingReplies }: {
+  item: FullComment; depth: number; repliesOpen?: boolean; onToggleReplies?: () => void; loadingReplies?: boolean;
 }) {
   const [failed, setFailed] = useState(false); const [expanded, setExpanded] = useState(false);
   useEffect(() => { setFailed(false); }, [item.avatar]);
@@ -32,13 +37,24 @@ const FullCommentRow = memo(function FullCommentRow({ item, depth, onToggleRepli
   return <View style={[styles.row, depth > 0 && styles.replyRow]}>
     {item.avatar && !failed ? <Image source={{ uri: item.avatar, headers: mediaHeaders }} style={[styles.avatar, depth > 0 && styles.replyAvatar]} onError={() => setFailed(true)} /> : <View style={[styles.avatar, depth > 0 && styles.replyAvatar]} />}
     <View style={styles.body}>
-      <Text style={styles.name}>{item.nickname}</Text>
-      <Text selectable numberOfLines={expanded ? undefined : 6} style={styles.text}>{item.text}</Text>
+      <Text style={[styles.name, depth > 0 && styles.replyName]}>{item.nickname}</Text>
+      <Text selectable numberOfLines={expanded ? undefined : 6} style={[styles.text, depth > 0 && styles.replyText]}>{item.text}</Text>
       {item.text.length > 160 && <Pressable accessibilityRole="button" onPress={() => setExpanded(value => !value)} hitSlop={5}><Text style={styles.reply}>{expanded ? '收起' : '展开'}</Text></Pressable>}
       {item.attachments.length > 0 && <View style={styles.attachments}>{item.attachments.map(attachment => <Image key={attachment.url} source={{ uri: attachment.url, headers: mediaHeaders }} style={styles.attachment} resizeMode="cover" />)}</View>}
-      {!!meta && <Text style={styles.meta}>{meta}</Text>}
-      {item.replyCount > 0 && depth === 0 && onToggleReplies && <Pressable accessibilityRole="button" onPress={onToggleReplies} hitSlop={5}><Text style={styles.reply}>{loadingReplies ? '正在读取回复…' : hasLoadedReplies ? '收起回复' : `${item.replyCount} 条回复`}</Text></Pressable>}
-    </View>{item.likes !== null && <Text accessibilityLabel={`${item.likes} 个赞`} style={styles.likes}>♡ {item.likes}</Text>}
+      <View style={styles.metaRow}>
+        {!!meta && <Text style={styles.meta}>{meta}</Text>}
+        {depth === 0 && <Text style={styles.metaDot}>·</Text>}
+        {depth === 0 && <Text style={styles.reply}>回复</Text>}
+      </View>
+      {item.replyCount > 0 && depth === 0 && onToggleReplies && !repliesOpen && <Pressable accessibilityRole="button" onPress={onToggleReplies} hitSlop={5} style={styles.expandReplies}><Text style={styles.reply}>{loadingReplies ? '正在读取回复…' : `展开 ${item.replyCount} 条回复`}</Text><Ionicons name="chevron-down" size={13} color="#9a9a9a" /></Pressable>}
+    </View>
+    <View style={styles.actions}>
+      <View style={styles.likeCol}>
+        <Ionicons name="heart-outline" size={16} color="#9a9a9a" />
+        {item.likes !== null && <Text style={styles.likeCount}>{formatLikes(item.likes)}</Text>}
+      </View>
+      <Ionicons name="heart-dislike-outline" size={16} color="#55555c" style={styles.dislike} />
+    </View>
   </View>;
 });
 
@@ -47,7 +63,7 @@ const FullCommentRow = memo(function FullCommentRow({ item, depth, onToggleRepli
 type ListRow =
   | { key: string; type: 'comment'; item: FullComment }
   | { key: string; type: 'reply'; item: FullComment }
-  | { key: string; type: 'moreReplies'; comment: FullComment; loading: boolean }
+  | { key: string; type: 'replyFooter'; comment: FullComment; hasMore: boolean; loading: boolean }
   | { key: string; type: 'replyEmpty'; comment: FullComment }
   | { key: string; type: 'replyError'; comment: FullComment; error: string };
 
@@ -144,8 +160,8 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
       const state = replyState[comment.id];
       if (state?.items.length) for (const reply of state.items) out.push({ key: `${comment.id}_${reply.id}`, type: 'reply', item: reply });
       if (state?.error) out.push({ key: `${comment.id}_err`, type: 'replyError', comment, error: state.error });
-      else if (state?.hasMore && state.cursor) out.push({ key: `${comment.id}_more`, type: 'moreReplies', comment, loading: state.loading });
-      else if (state?.loaded && state.items.length === 0) out.push({ key: `${comment.id}_empty`, type: 'replyEmpty', comment });
+      else if (state?.loaded && state.items.length === 0 && !state.hasMore) out.push({ key: `${comment.id}_empty`, type: 'replyEmpty', comment });
+      out.push({ key: `${comment.id}_footer`, type: 'replyFooter', comment, hasMore: !!state?.hasMore && !!state?.cursor, loading: !!state?.loading });
     }
     return out;
   }, [fullComments, repliesOpen, replyState]);
@@ -215,10 +231,13 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
           renderItem={({ item }) => {
             if (item.type === 'comment') {
               const state = replyState[item.item.id];
-              return <FullCommentRow item={item.item} depth={0} loadingReplies={!!state?.loading} hasLoadedReplies={!!repliesOpen[item.item.id] && !!state?.items.length} onToggleReplies={item.item.replyCount > 0 ? () => toggleReplies(item.item) : undefined} />;
+              return <FullCommentRow item={item.item} depth={0} repliesOpen={!!repliesOpen[item.item.id]} loadingReplies={!!state?.loading} onToggleReplies={item.item.replyCount > 0 ? () => toggleReplies(item.item) : undefined} />;
             }
             if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} />;
-            if (item.type === 'moreReplies') return <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true, 10)} style={styles.replyMore}><Text style={styles.retry}>{item.loading ? '正在读取更多回复…' : '展开更多'}</Text></Pressable>;
+            if (item.type === 'replyFooter') return <View style={styles.replyFooter}>
+              {item.hasMore ? <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true, 10)} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>{item.loading ? '正在读取更多…' : '展开更多'}</Text><Ionicons name="chevron-down" size={13} color="#9a9a9a" /></Pressable> : null}
+              <Pressable accessibilityRole="button" onPress={() => setRepliesOpen(previous => ({ ...previous, [item.comment.id]: false }))} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>收起</Text><Ionicons name="chevron-up" size={13} color="#9a9a9a" /></Pressable>
+            </View>;
             if (item.type === 'replyEmpty') return <Text style={styles.replyEmpty}>暂无回复</Text>;
             return <Pressable accessibilityRole="button" onPress={() => void loadReplies(item.comment, '0', false, 3)} style={styles.replyError}><Text style={styles.meta}>回复读取失败：{item.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>;
           }} /></GestureDetector> : null}
@@ -235,17 +254,26 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   </Animated.View>;
 }
 const styles = StyleSheet.create({
-  sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#1b1d29', borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#2c2f3d' },
-  header: { height: 56, alignItems: 'center', justifyContent: 'center' }, grip: { width: 32, height: 3, borderRadius: 2, backgroundColor: '#3a3d4a', position: 'absolute', top: 8 },
-  title: { color: '#fff', fontWeight: '600', fontSize: 14 }, close: { position: 'absolute', right: 20, top: 14 }, closeText: { color: '#d8d8de', fontSize: 25 },
-  notice: { backgroundColor: '#2c2718', paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeText: { color: '#e8c477', fontSize: 11, flex: 1 },
-  noticeFull: { backgroundColor: '#16241d', paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeFullText: { color: '#7fdcaa', fontSize: 11, flex: 1 },
-  debug: { color: '#8b8b96', fontSize: 10, paddingHorizontal: 14, paddingBottom: 6, backgroundColor: '#20222e' },
-  loginCta: { color: '#fc2f56', fontSize: 12, fontWeight: '600' },
-  list: { padding: 16 }, loading: { padding: 28 }, error: { padding: 16, gap: 9, alignItems: 'center' }, more: { padding: 14, alignItems: 'center' },
-  replyMore: { paddingVertical: 8, paddingLeft: 74, alignItems: 'flex-start' }, replyError: { paddingVertical: 8, paddingLeft: 74, gap: 4, alignItems: 'flex-start' }, replyEmpty: { color: '#8b8b96', fontSize: 12, paddingVertical: 8, paddingLeft: 74 },
-  row: { flexDirection: 'row', gap: 11, marginBottom: 25 }, replyRow: { marginBottom: 14, paddingLeft: 40 }, avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#2a2c3a' }, replyAvatar: { width: 26, height: 26, borderRadius: 13 }, body: { flex: 1, gap: 6 },
-  name: { color: '#9a9aa5', fontSize: 12 }, text: { color: '#f2f2f5', fontSize: 15, lineHeight: 22 }, meta: { color: '#8b8b96', fontSize: 11 }, reply: { color: '#9a9aa5', fontSize: 12 }, likes: { color: '#9a9aa5', fontSize: 11, paddingTop: 2, maxWidth: 58 },
-  attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, attachment: { width: 84, height: 84, borderRadius: 6, backgroundColor: '#2a2c3a' },
-  footer: { color: '#7c7c88', textAlign: 'center', fontSize: 12, padding: 12 }, retry: { color: '#fc2f56', fontSize: 12 },
+  sheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#0b0b0d', borderTopLeftRadius: 16, borderTopRightRadius: 16, overflow: 'hidden', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#1e1e22' },
+  header: { height: 56, alignItems: 'center', justifyContent: 'center' }, grip: { width: 32, height: 3, borderRadius: 2, backgroundColor: '#333338', position: 'absolute', top: 8 },
+  title: { color: '#f2f2f5', fontWeight: '600', fontSize: 14 }, close: { position: 'absolute', right: 20, top: 14 }, closeText: { color: '#9a9aa0', fontSize: 25 },
+  notice: { backgroundColor: '#151310', paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeText: { color: '#b99a5a', fontSize: 11, flex: 1 },
+  noticeFull: { backgroundColor: '#0f1512', paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 10 }, noticeFullText: { color: '#6fbf8f', fontSize: 11, flex: 1 },
+  debug: { color: '#7a7a82', fontSize: 10, paddingHorizontal: 14, paddingBottom: 6, backgroundColor: '#121316' },
+  loginCta: { color: '#ff4d5e', fontSize: 12, fontWeight: '600' },
+  list: { padding: 14 }, loading: { padding: 28 }, error: { padding: 16, gap: 9, alignItems: 'center' }, more: { padding: 14, alignItems: 'center' },
+  replyError: { paddingVertical: 8, paddingLeft: 76, gap: 4, alignItems: 'flex-start' }, replyEmpty: { color: '#7a7a82', fontSize: 12, paddingVertical: 8, paddingLeft: 76 },
+  replyFooter: { flexDirection: 'row', alignItems: 'center', gap: 24, paddingLeft: 76, paddingVertical: 10, marginBottom: 4 },
+  footerActionRow: { flexDirection: 'row', alignItems: 'center', gap: 2 }, footerAction: { color: '#9a9a9a', fontSize: 13 },
+  row: { flexDirection: 'row', gap: 10, marginBottom: 24, alignItems: 'flex-start' }, replyRow: { marginBottom: 12, paddingLeft: 46 },
+  avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#242429' }, replyAvatar: { width: 26, height: 26, borderRadius: 13 },
+  body: { flex: 1, gap: 5 },
+  name: { color: '#8b8b93', fontSize: 12.5 }, replyName: { fontSize: 11.5 },
+  text: { color: '#e9e9ec', fontSize: 15, lineHeight: 22 }, replyText: { fontSize: 14, lineHeight: 20 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 }, meta: { color: '#7a7a82', fontSize: 11 }, metaDot: { color: '#5a5a62', fontSize: 11 },
+  reply: { color: '#9a9a9a', fontSize: 12 }, expandReplies: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+  actions: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingTop: 2 }, likeCol: { alignItems: 'center', minWidth: 26 }, likeCount: { color: '#8b8b93', fontSize: 10.5, marginTop: 1 }, dislike: {},
+  likes: { color: '#9a9a9a', fontSize: 11, paddingTop: 2, maxWidth: 58 },
+  attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, attachment: { width: 84, height: 84, borderRadius: 6, backgroundColor: '#242429' },
+  footer: { color: '#6f6f78', textAlign: 'center', fontSize: 12, padding: 12 }, retry: { color: '#ff4d5e', fontSize: 12 },
 });

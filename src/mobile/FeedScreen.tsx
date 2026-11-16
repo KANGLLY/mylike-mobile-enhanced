@@ -13,6 +13,7 @@ import { LibraryScreen, type OpenQueue } from './LibraryScreen';
 import { MediaSlot, type MediaControl, type MediaInfo } from './Media';
 import { rates, type Scope, type Session, type Source } from './model';
 import { SeekRail } from './SeekRail';
+import { DanmakuOverlay } from './Danmaku';
 
 import { FolderSheet } from './FolderSheet';
 import { feedChrome, mediaAreaHeight } from './layout';
@@ -193,6 +194,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
         <View style={styles.tool}><View style={ui.icon}><Ionicons name="arrow-redo" size={33} color="#fff" /></View><Text style={styles.toolLabel}>{countLabel(previews[workId].data?.statistics?.shares, '分享')}</Text></View>
       </View></>}
   </View> : <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+    {preferences.danmaku && <DanmakuOverlay workId={workId} seconds={time.seconds} durationMs={Math.round((time.duration || 0) * 1000)} playing={playing && !paused && !comments && !edgeHeld} width={width} height={mediaTargetHeight} top={chrome.top + 50} />}
     {!comments && !chromeHidden && <>
       <View style={[styles.caption, captionLayout]} pointerEvents="box-none"><Pressable onPress={() => openSide('author')}><Text style={styles.author}>@{author}</Text></Pressable>
         <Text pointerEvents="none" numberOfLines={3} style={styles.description}>{current.work?.title || current.data?.title || '抖音作品'}</Text>
@@ -232,7 +234,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
       {!comments && !chromeHidden && <View pointerEvents="box-none" style={[styles.header, { top: chrome.top, left: Math.max(5, insets.left), right: Math.max(5, insets.right) }]}>
         {onBack ? <IconButton name="chevron-back" size={22} color="#ffffffb3" label="返回内容库" onPress={onBack} /> : <View style={ui.icon} />}
         {onSource ? <View style={styles.channels}>{([['all','推荐'],['likes','喜欢'],['favorites','收藏']] as const).map(([key, label]) => <Pressable key={key} style={styles.channelTab} onPress={() => { if (key !== source) onSource(key); else void refresh(); }}><Text style={[styles.channel, key === source && styles.channelActive]}>{label}</Text>{key === source && <View style={styles.channelUnderline} />}</Pressable>)}</View> : <Text style={ui.text}>{title || '回看'}</Text>}
-        <View style={ui.icon} />
+        <Pressable accessibilityRole="button" accessibilityLabel={preferences.danmaku ? '关闭弹幕' : '开启弹幕'} onPress={() => setPreferences({ danmaku: !preferences.danmaku })} hitSlop={10} style={styles.danmakuToggle}><Text style={[styles.danmakuToggleText, preferences.danmaku && styles.danmakuToggleOn]}>弹</Text></Pressable>
       </View>}
       {error && !chromeHidden && <Pressable style={[styles.error, { top: chrome.top + 65 }]} onPress={() => void refresh()}><Text style={ui.error}>{error} · 点按重试</Text></Pressable>}
       {!chromeHidden && <Animated.View pointerEvents="none" style={[styles.heart, heartStyle]}><Ionicons name="heart" size={110} color="#fc2f56" /></Animated.View>}
@@ -253,6 +255,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
           </> : panel === 'share' ? <ShareActions key={id} id={id} title={current.work?.title || current.data?.title || '抖音作品'} gallery={gallery} onShared={() => setPanel(null)} /> : <><View style={styles.options}>
             <Button title={preferences.auto ? '自动连播：开' : '自动连播：关'} selected={preferences.auto} onPress={() => setPreferences({ auto: !preferences.auto })} />
             <Button title={preferences.clear ? '退出清屏' : '清屏'} selected={preferences.clear} onPress={() => setPreferences({ clear: !preferences.clear })} />
+            <Button title={preferences.danmaku ? '弹幕：开' : '弹幕：关'} selected={preferences.danmaku} onPress={() => setPreferences({ danmaku: !preferences.danmaku })} />
             <Button title="播放队列" onPress={() => setPanel('queue')} /><Button title="重新打乱" onPress={() => { setPanel(null); reshuffle(); }} /><Button title="重新取链" onPress={() => { setPanel(null); retry(); }} />
           </View><Text style={ui.muted}>播放速度</Text><View style={styles.options}>{rates.map(rate => <Button key={rate} title={`${rate}×`} selected={preferences.rate === rate} onPress={() => { setBoostLocked(false); setPreferences({ rate }); }} />)}</View>
             <Text style={ui.muted}>喜欢和收藏仅修改本机。评论可选择登录抖音后查看完整内容。</Text><Button title="继续播放" onPress={() => setPanel(null)} />
@@ -268,6 +271,7 @@ const styles = StyleSheet.create({
   channels: { flexDirection: 'row', alignItems: 'center', gap: 22 }, channelTab: { height: 44, justifyContent: 'center', paddingBottom: 5 },
   channel: { color: '#ffffff70', fontSize: 14.5, lineHeight: 20, fontWeight: '500', textShadowColor: '#0003', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, channelActive: { color: '#ffffffd9', fontSize: 15, fontWeight: '600' },
   channelUnderline: { position: 'absolute', bottom: 5, alignSelf: 'center', width: 18, height: 2, borderRadius: 2, backgroundColor: '#ffffffbf' },
+  danmakuToggle: { width: 30, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff14' }, danmakuToggleText: { color: '#ffffff8c', fontSize: 12, fontWeight: '600' }, danmakuToggleOn: { color: '#ffd25e' },
   caption: { position: 'absolute', left: 12, right: 78, zIndex: 2 },
   author: { color: '#fff', fontSize: 17, lineHeight: 23, fontWeight: '600', marginBottom: 8, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
   description: { color: '#ffffffe6', fontSize: 15.5, lineHeight: 22, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, note: { color: '#ddd', fontSize: 10, marginTop: 5 },

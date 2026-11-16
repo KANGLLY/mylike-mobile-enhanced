@@ -286,9 +286,38 @@ export function parseVideoList(body: string, requestedCursor: string, httpStatus
   return { items, nextCursor, hasMore: more };
 }
 
+export type DanmakuItem = { id: string; text: string; offsetMs: number; type: number };
+export type DanmakuPage = { items: DanmakuItem[]; total: number };
+
+export function parseDanmakuList(body: string, httpStatus = 200): DanmakuPage {
+  if (httpStatus === 401 || httpStatus === 403) throw new CommentReadError('auth', '登录状态已失效，请重新登录抖音。');
+  if (httpStatus === 429) throw new CommentReadError('restricted', '请求过于频繁，请稍后再试。');
+  if (httpStatus < 200 || httpStatus >= 300) throw new CommentReadError('network', `弹幕请求失败（HTTP ${httpStatus}）。`);
+  if (/<(?:html|!doctype)/i.test(body.slice(0, 500))) throw new CommentReadError('restricted', '接口返回了网页，请重新登录或稍后再试。');
+  if (!body.trim()) return { items: [], total: 0 };
+  let payload: Record<string, unknown> | undefined;
+  try { payload = record(safeJson(trimToFirstJson(body))); } catch { throw new CommentReadError('invalid', '弹幕响应不是有效 JSON。'); }
+  if (!payload) throw new CommentReadError('invalid', '弹幕响应结构无效。');
+  const code = statusCodeOf(payload);
+  if (code !== '' && code !== '0') throw new CommentReadError('restricted', '未能读取弹幕，请稍后再试。');
+  const rows = Array.isArray(payload.danmaku_list) ? (payload.danmaku_list as unknown[]) : [];
+  const items: DanmakuItem[] = [];
+  for (const raw of rows) {
+    const row = record(raw);
+    if (!row) continue;
+    const text = typeof row.text === 'string' ? row.text.trim() : '';
+    if (!text) continue;
+    const offset = Number(row.offset_time);
+    const id = row.danmaku_id != null ? String(row.danmaku_id) : `d${items.length}`;
+    items.push({ id, text, offsetMs: Number.isFinite(offset) ? offset : 0, type: Number(row.danmaku_type) || 0 });
+  }
+  const total = Number(payload.total);
+  return { items, total: Number.isFinite(total) ? total : items.length };
+}
+
 // ---------------------------------------------------------------- page bridge
 
-export type BridgeOperation = 'comments' | 'commentReplies' | 'self' | 'likes' | 'favorites';
+export type BridgeOperation = 'comments' | 'commentReplies' | 'self' | 'likes' | 'favorites' | 'danmaku';
 export type BridgeRequest = { id: string; operation: BridgeOperation; parameters: Record<string, string>; timeout: number };
 export type BridgeResult = { id: string; status: number; body: string; error?: string; message?: string };
 
@@ -304,7 +333,7 @@ const A_BOGUS_SOURCE = "var MYLIKE_A_BOGUS=(function(){\n// All the content in t
 
 const PAGE_SCRIPT = [
   A_BOGUS_SOURCE,
-  "var PATHS={self:'/aweme/v1/web/user/profile/self/',comments:'/aweme/v1/web/comment/list/',commentReplies:'/aweme/v1/web/comment/list/reply/',likes:'/aweme/v1/web/aweme/favorite/',favorites:'/aweme/v1/web/aweme/listcollection/'};",
+  "var PATHS={self:'/aweme/v1/web/user/profile/self/',comments:'/aweme/v1/web/comment/list/',commentReplies:'/aweme/v1/web/comment/list/reply/',likes:'/aweme/v1/web/aweme/favorite/',favorites:'/aweme/v1/web/aweme/listcollection/',danmaku:'/aweme/v1/web/danmaku/get_v2/'};",
   "function mylikeToken(params){var parts=(document.cookie||'').split(';');var tk='';for(var c=0;c<parts.length;c++){var seg=parts[c];while(seg.charAt(0)===' '){seg=seg.substring(1);}if(seg.indexOf('msToken=')===0){tk=seg.substring(8);break;}}if(tk){try{tk=decodeURIComponent(tk);}catch(_e){}params.set('msToken',tk);}}",
   "function mylikeFp(params){params.set('pc_client_type','1');params.set('browser_language',navigator.language||'');params.set('browser_platform',navigator.platform||'');params.set('browser_online',String(navigator.onLine));if(navigator.hardwareConcurrency){params.set('cpu_core_num',String(navigator.hardwareConcurrency));}var ua=navigator.userAgent||'';var ci=ua.indexOf('Chrome/');var chrome='';if(ci>=0){var mm=ua.substring(ci+7).match(/^[0-9.]+/);if(mm){chrome=mm[0];}}if(chrome){params.set('browser_name','Chrome');params.set('browser_version',chrome);params.set('engine_name','Blink');params.set('engine_version',chrome);}var os='';if(ua.indexOf('Windows')>=0){os='Windows';}else if(ua.indexOf('Macintosh')>=0){os='Mac OS';}else if(ua.indexOf('Linux')>=0){os='Linux';}if(os){params.set('os_name',os);}if(typeof screen!=='undefined'){params.set('screen_width',String(screen.width));params.set('screen_height',String(screen.height));}}",
   "function mylikeRequest(request){return new Promise(function(resolve){try{",
@@ -312,13 +341,13 @@ const PAGE_SCRIPT = [
   "var params=new URLSearchParams({device_platform:'webapp',aid:'6383',channel:'channel_pc_web',version_code:'290100',version_name:'29.1.0',update_version_code:'170400',cookie_enabled:'true',platform:'PC'});",
   "var method='GET';var body=null;var referrer='';var headers={accept:'application/json, text/plain, */*'};var href;",
   "if(op==='favorites'){mylikeFp(params);params.set('pc_libra_divert','Windows');params.set('publish_video_strategy_type','2');mylikeToken(params);referrer='https://www.douyin.com/user/self?from_tab_name=main&showTab=favorite_collection';method='POST';headers['content-type']='application/x-www-form-urlencoded;charset=UTF-8';headers['x-secsdk-csrf-token']='DOWNGRADE';body=new URLSearchParams({cursor:p.cursor||'0',count:p.count||'20'}).toString();}",
-  "else{for(i=0;i<keys.length;i++){params.set(keys[i],p[keys[i]]);}if(op==='comments'||op==='commentReplies'){if(!params.has('count')){params.set('count','20');}mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.aweme_id||p.item_id||'');}else if(op==='likes'){mylikeToken(params);}}",
+  "else{for(i=0;i<keys.length;i++){params.set(keys[i],p[keys[i]]);}if(op==='comments'||op==='commentReplies'){if(!params.has('count')){params.set('count','20');}mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.aweme_id||p.item_id||'');}else if(op==='likes'){mylikeToken(params);}else if(op==='danmaku'){mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.item_id||'');}}",
   "var query=params.toString();",
   // Replies are risk-gated: the page signs the comment list but not the reply
   // endpoint, so sign it here. a_bogus for replies uses the [0,1,8] arguments
   // variant (sign_reply), unlike detail's [0,1,14]; the query is signed exactly
   // as it is sent (we append a_bogus to that same string).
-  "if(op==='commentReplies'&&typeof MYLIKE_A_BOGUS!=='undefined'&&MYLIKE_A_BOGUS){try{var ab=MYLIKE_A_BOGUS.reply(query,navigator.userAgent||'');if(ab){query=query+'&a_bogus='+ab;}}catch(_signErr){}}",
+  "if((op==='commentReplies'||op==='danmaku')&&typeof MYLIKE_A_BOGUS!=='undefined'&&MYLIKE_A_BOGUS){try{var ab=(op==='commentReplies'?MYLIKE_A_BOGUS.reply:MYLIKE_A_BOGUS.detail)(query,navigator.userAgent||'');if(ab){query=query+'&a_bogus='+ab;}}catch(_signErr){}}",
   "href='https://www.douyin.com'+PATHS[op]+'?'+query;",
   "var controller=new AbortController();var timer=setTimeout(function(){try{controller.abort();}catch(_e){}},request.timeout||15000);",
   "var opts={credentials:'include',cache:'no-store',signal:controller.signal,method:method,headers:headers};if(referrer){opts.referrer=referrer;}if(body){opts.body=body;}",
