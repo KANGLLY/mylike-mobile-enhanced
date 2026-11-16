@@ -6,13 +6,45 @@
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "platforms": ["ios", "android"],
+    "icon": "./assets/icons/ios/classic.png",
     "ios": {
       "bundleIdentifier": "com.mylike.replay",
       "buildNumber": "3"
     },
     "android": {
       "package": "com.mylike.replay",
-      "versionCode": 3
-    }
+      "versionCode": 3,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icons/android/classic-fg.png",
+        "backgroundColor": "#fc2f56"
+      }
+    },
+    "plugins": [
+      [
+        "@semisquircle/expo-dynamic-app-icon",
+        {
+          "classic": {
+            "ios": "./assets/icons/ios/classic.png",
+            "android": { "foregroundImage": "./assets/icons/android/classic-fg.png", "backgroundColor": "#fc2f56" }
+          },
+          "midnight": {
+            "ios": "./assets/icons/ios/midnight.png",
+            "android": { "foregroundImage": "./assets/icons/android/midnight-fg.png", "backgroundColor": "#111114" }
+          },
+          "sakura": {
+            "ios": "./assets/icons/ios/sakura.png",
+            "android": { "foregroundImage": "./assets/icons/android/sakura-fg.png", "backgroundColor": "#ff5c96" }
+          },
+          "ocean": {
+            "ios": "./assets/icons/ios/ocean.png",
+            "android": { "foregroundImage": "./assets/icons/android/ocean-fg.png", "backgroundColor": "#2f6bff" }
+          },
+          "forest": {
+            "ios": "./assets/icons/ios/forest.png",
+            "android": { "foregroundImage": "./assets/icons/android/forest-fg.png", "backgroundColor": "#12a06a" }
+          }
+        }
+      ]
+    ]
   }
 }

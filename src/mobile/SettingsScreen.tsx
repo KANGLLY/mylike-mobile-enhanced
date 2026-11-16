@@ -1,4 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { setAppIcon, getAppIcon } from '@semisquircle/expo-dynamic-app-icon';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { cacheUsage, clearPlaybackCache, bytesLabel } from './cache';
@@ -7,6 +8,14 @@ import type { MobileStore } from './store';
 import { PageHeader, ui } from './ui';
 
 type Usage = { overview: Awaited<ReturnType<MobileStore['accountOverview']>>; database: number; cache: ReturnType<typeof cacheUsage> };
+const ICON_OPTIONS: { name: string; label: string; color: string }[] = [
+  { name: 'classic', label: '经典红', color: '#fc2f56' },
+  { name: 'midnight', label: '午夜黑', color: '#16161a' },
+  { name: 'sakura', label: '樱花粉', color: '#ff5c96' },
+  { name: 'ocean', label: '深海蓝', color: '#2f6bff' },
+  { name: 'forest', label: '森林绿', color: '#12a06a' },
+];
+const ICON_LABELS: Record<string, string> = Object.fromEntries(ICON_OPTIONS.map(option => [option.name, option.label]));
 function Section({ title, children }: { title: string; children: ReactNode }) { return <View style={styles.section}><Text style={styles.sectionTitle}>{title}</Text><View style={styles.card}>{children}</View></View>; }
 function Row({ title, detail, children, onPress, disabled = false, danger = false }: { title: string; detail?: string; children?: ReactNode; onPress?: () => void; disabled?: boolean; danger?: boolean }) {
   const content = <><View style={{ flex: 1, gap: 5 }}><Text style={[styles.rowTitle, danger && { color: '#ff6c88' }]}>{title}</Text>{detail && <Text style={ui.muted}>{detail}</Text>}</View>{children ?? (onPress && <Ionicons name="chevron-forward" size={18} color="#777c88" />)}</>;
@@ -16,6 +25,7 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
   const { clear, store, nickname, changed, preferences, setPreferences } = useMobile();
   const [busy, setBusy] = useState(false); const [inspecting, setInspecting] = useState(true); const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState(''); const [dataError, setDataError] = useState(''); const [notice, setNotice] = useState('');
+  const [icon, setIcon] = useState<string>('DEFAULT');
   const alive = useRef(true); const operation = useRef(false); const generation = useRef(0);
   async function inspect() {
     const request = ++generation.current; if (alive.current) { setInspecting(true); setDataError(''); }
@@ -24,6 +34,20 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
     finally { if (alive.current && request === generation.current) setInspecting(false); }
   }
   useEffect(() => { alive.current = true; void inspect(); return () => { alive.current = false; generation.current++; }; }, [store]);
+  useEffect(() => { let running = true; void getAppIcon().then(name => { if (running && name) setIcon(name); }).catch(() => {}); return () => { running = false; }; }, []);
+  async function pickIcon(name: string | null) {
+    if (operation.current) return; operation.current = true; setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await setAppIcon(name, true);
+      if (!alive.current) return;
+      if (result === false) setError('图标切换失败，请重试。');
+      else {
+        setIcon(result === 'DEFAULT' ? 'DEFAULT' : result);
+        setNotice(name === null ? '已恢复默认图标，按 Home 退到桌面约 5 秒后生效' : `已选择「${ICON_LABELS[result] ?? result}」图标，按 Home 退到桌面约 5 秒后生效`);
+      }
+    } catch (failure) { if (alive.current) setError(failure instanceof Error ? failure.message : '图标切换失败，请重试。'); }
+    finally { if (alive.current) setBusy(false); operation.current = false; }
+  }
   async function action(task: () => Promise<string>) {
     if (operation.current) return; operation.current = true; setBusy(true); setError(''); setNotice('');
     try { const message = await task(); if (alive.current) setNotice(message); }
@@ -55,8 +79,17 @@ export function SettingsScreen({ onBack }: { onBack: () => void }) {
         <Ionicons name="swap-horizontal" size={18} color="#8a8f9a" style={{ marginLeft: 8 }} />
       </Row>
     </Section>
+    <Section title="桌面图标">
+      {ICON_OPTIONS.map(option => <Row key={option.name} title={option.label} detail={icon === option.name ? '当前使用中' : '点按切换到该图标'} disabled={busy} onPress={() => { void pickIcon(option.name); }}>
+        {icon === option.name ? <Ionicons name="checkmark-circle" size={22} color="#3ddc84" /> : <View style={[styles.swatch, { backgroundColor: option.color }]} />}
+      </Row>)}
+      <Row title="恢复默认" detail="使用经典红色图标" disabled={busy} onPress={() => { void pickIcon(null); }}>
+        {icon === 'DEFAULT' ? <Ionicons name="checkmark-circle" size={22} color="#3ddc84" /> : <Ionicons name="refresh" size={20} color="#8a8f9a" />}
+      </Row>
+      <Row title="说明" detail="安卓需按 Home 退到桌面，约 5 秒后图标自动切换完成。" />
+    </Section>
   </ScrollView>
     {!!(busy || notice || error || dataError) && <View pointerEvents="none" style={styles.feedback}><Text accessibilityLiveRegion="polite" style={[styles.notice, !!(error || dataError) && { color: '#ffc0cc' }]}>{busy ? '处理中…' : error || dataError || notice}</Text></View>}
   </View>;
 }
-const styles = StyleSheet.create({ feedback: { position: 'absolute', bottom: 12, left: 16, right: 16, padding: 14, backgroundColor: '#383c49', borderRadius: 10, zIndex: 5 }, content: { padding: 16, gap: 24, paddingBottom: 36 }, section: { gap: 10 }, sectionTitle: { color: '#a9acb6', fontSize: 13, marginLeft: 4 }, card: { borderRadius: 12, backgroundColor: '#20232d', overflow: 'hidden' }, row: { minHeight: 54, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#ffffff08' }, rowTitle: { color: '#f0f0f3', fontSize: 15 }, summary: { padding: 16, gap: 8 }, notice: { color: '#b7d7c1', lineHeight: 21, fontSize: 13, textAlign: 'center' } });
+const styles = StyleSheet.create({ feedback: { position: 'absolute', bottom: 12, left: 16, right: 16, padding: 14, backgroundColor: '#383c49', borderRadius: 10, zIndex: 5 }, swatch: { width: 22, height: 22, borderRadius: 11 }, content: { padding: 16, gap: 24, paddingBottom: 36 }, section: { gap: 10 }, sectionTitle: { color: '#a9acb6', fontSize: 13, marginLeft: 4 }, card: { borderRadius: 12, backgroundColor: '#20232d', overflow: 'hidden' }, row: { minHeight: 54, paddingHorizontal: 16, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', gap: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#ffffff08' }, rowTitle: { color: '#f0f0f3', fontSize: 15 }, summary: { padding: 16, gap: 8 }, notice: { color: '#b7d7c1', lineHeight: 21, fontSize: 13, textAlign: 'center' } });

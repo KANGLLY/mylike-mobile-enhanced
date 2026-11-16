@@ -161,6 +161,9 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   useEffect(() => () => cancelAnimation(mediaHeight), [mediaHeight]);
   // Resize the same route without retaining an offset measured on the old screen.
   useLayoutEffect(() => { cancelAnimation(x); x.value = side === 'author' ? -width : 0; }, [width]);
+  const [captionOpen, setCaptionOpen] = useState(false);
+  useEffect(() => { setCaptionOpen(false); }, [id]);
+  const captionText = current.work?.title || current.data?.title || '抖音作品';
   const liked = marks[id]?.liked ?? current.work?.liked ?? false;
   const saved = marks[id]?.saved ?? current.work?.saved ?? false;
   const like = useCallback(() => { if (id && current.work) { if (!liked) setMark(id, 'liked', true); heart.value = 1; heart.value = withTiming(0, { duration: 750 }); } }, [id, current.work, liked, setMark, heart]);
@@ -197,7 +200,8 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
     {preferences.danmaku && <DanmakuOverlay workId={workId} seconds={time.seconds} durationMs={Math.round((time.duration || 0) * 1000)} playing={playing && !paused && !comments && !edgeHeld} width={width} height={mediaTargetHeight} top={chrome.top + 50} />}
     {!comments && !chromeHidden && <>
       <View style={[styles.caption, captionLayout]} pointerEvents="box-none"><Pressable onPress={() => openSide('author')}><Text style={styles.author}>@{author}</Text></Pressable>
-        <Text pointerEvents="none" numberOfLines={3} style={styles.description}>{current.work?.title || current.data?.title || '抖音作品'}</Text>
+        <Text pointerEvents="none" numberOfLines={captionOpen ? undefined : 3} style={styles.description}>{captionText}</Text>
+        {captionText.length > 50 && <Pressable accessibilityRole="button" accessibilityLabel={captionOpen ? '收起文案' : '展开全部文案'} onPress={() => setCaptionOpen(value => !value)} hitSlop={8}><Text style={styles.captionToggle}>{captionOpen ? '收起' : '展开'}</Text></Pressable>}
         {gallery && <Text pointerEvents="none" style={styles.note}>{current.livePhase === 'loading' ? '正在准备实况片段…' : current.hasLive ? '实况图集' : current.work?.kind === 'live-gallery' ? '当前页无可用实况片段' : '图集'}{current.musicUnavailable ? ' · 配乐暂不可用' : ''}</Text>}
       </View>
       <View style={[styles.toolbar, toolbarLayout]}>
@@ -274,7 +278,7 @@ const styles = StyleSheet.create({
   danmakuToggle: { width: 30, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff14' }, danmakuToggleText: { color: '#ffffff8c', fontSize: 12, fontWeight: '600' }, danmakuToggleOn: { color: '#ffd25e' },
   caption: { position: 'absolute', left: 12, right: 78, zIndex: 2 },
   author: { color: '#fff', fontSize: 17, lineHeight: 23, fontWeight: '600', marginBottom: 8, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
-  description: { color: '#ffffffe6', fontSize: 15.5, lineHeight: 22, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, note: { color: '#ddd', fontSize: 10, marginTop: 5 },
+  description: { color: '#ffffffe6', fontSize: 15.5, lineHeight: 22, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, captionToggle: { color: '#ffffffcc', fontSize: 13, fontWeight: '600', marginTop: 3, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, note: { color: '#ddd', fontSize: 10, marginTop: 5 },
   toolbar: { position: 'absolute', right: 7, alignItems: 'center', zIndex: 2 }, avatar: { width: 46, height: 46, borderRadius: 23, borderWidth: 1.5, borderColor: '#fff', alignItems: 'center', justifyContent: 'center', backgroundColor: '#52626a', marginBottom: 6 },
   tool: { alignItems: 'center' }, toolLabel: { color: '#ffffffe6', fontSize: 12, lineHeight: 17, fontWeight: '400', textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
   pause: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'center', justifyContent: 'center' },
