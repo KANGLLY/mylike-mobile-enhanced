@@ -181,7 +181,7 @@ export function parseCommentList(body: string, workId: string, requestedCursor: 
   return { items, nextCursor, hasMore: more };
 }
 
-export function parseSelf(body: string, httpStatus = 200): { loggedIn: boolean; nickname?: string } {
+export function parseSelf(body: string, httpStatus = 200): { loggedIn: boolean; nickname?: string; secUid?: string } {
   if (httpStatus === 401 || httpStatus === 403 || httpStatus === 0) return { loggedIn: false };
   if (!body.trim() || /<(?:html|!doctype)/i.test(body.slice(0, 300))) return { loggedIn: false };
   let payload: Record<string, unknown> | undefined;
@@ -192,7 +192,8 @@ export function parseSelf(body: string, httpStatus = 200): { loggedIn: boolean; 
   if (!user) return { loggedIn: false };
   const uid = text(user.uid) || (typeof user.uid === 'number' ? String(user.uid) : '');
   if (!uid && !text(user.nickname)) return { loggedIn: false };
-  return { loggedIn: true, nickname: text(user.nickname) || undefined };
+  const secUid = text(user.sec_uid) || text(user.sec_user_id);
+  return { loggedIn: true, nickname: text(user.nickname) || undefined, ...(secUid ? { secUid } : {}) };
 }
 
 // ---------------------------------------------------------------- video lists
@@ -282,8 +283,10 @@ export function parseVideoList(body: string, requestedCursor: string, httpStatus
       if (!/^0+$/.test(cursor)) nextCursor = cursor;
     } catch { nextCursor = null; }
   }
-  if (nextCursor !== null && nextCursor === requestedCursor) throw new CommentReadError('stalled', '列表分页没有推进，请重试。');
-  return { items, nextCursor, hasMore: more };
+  // A non-advancing cursor means the platform stopped paginating for us; keep the
+  // items we already have and end here instead of failing the whole sync.
+  if (nextCursor !== null && nextCursor === requestedCursor) nextCursor = null;
+  return { items, nextCursor, hasMore: more && nextCursor !== null };
 }
 
 export type DanmakuItem = { id: string; text: string; offsetMs: number; type: number };

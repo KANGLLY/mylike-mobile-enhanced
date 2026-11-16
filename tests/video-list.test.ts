@@ -43,3 +43,18 @@ test('parseVideoList trims trailing log after the first JSON object', () => {
 test('parseVideoList reports an expired login', () => {
   assert.throws(() => parseVideoList('', '0', 401), /登录/);
 });
+
+test('parseVideoList stops gracefully when the cursor no longer advances', () => {
+  const stalled = JSON.stringify({
+    status_code: 0,
+    has_more: 1,
+    max_cursor: 1699,
+    aweme_list: [
+      { aweme_id: '7300000000000000009', desc: 'x', create_time: 1690000000, author: { nickname: 'a' }, video: { cover: { url_list: ['https://p3.douyinpic.com/c.jpeg'] } } },
+    ],
+  });
+  const page = parseVideoList(stalled, '1699');
+  assert.equal(page.items.length, 1);
+  assert.equal(page.nextCursor, null);
+  assert.equal(page.hasMore, false);
+});
