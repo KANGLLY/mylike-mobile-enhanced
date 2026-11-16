@@ -252,7 +252,13 @@ function awemeToItem(value: unknown): VideoItem | null {
 // collection page (`/aweme/v1/web/aweme/listcollection/`). Both expose
 // `aweme_list`, `has_more`, and a `max_cursor`/`cursor`.
 export function parseVideoList(body: string, requestedCursor: string, httpStatus = 200): VideoPage {
-  if (httpStatus === 401 || httpStatus === 403) throw new CommentReadError('auth', '登录状态已失效，请重新登录抖音。');
+  if (httpStatus === 401 || httpStatus === 403) {
+    const snippet = body.replace(/\s+/g, ' ').trim().slice(0, 240);
+    let code = '';
+    try { code = statusCodeOf(record(safeJson(trimToFirstJson(body))) ?? {}); } catch { /* ignore */ }
+    if (!snippet || code === '8' || /not[\s_-]*login|未登录|登录已失效/i.test(snippet)) throw new CommentReadError('auth', '登录状态已失效，请重新登录抖音。');
+    throw new CommentReadError('restricted', `点赞/收藏接口被拒绝（HTTP ${httpStatus}）${snippet ? `：${snippet}` : ''}`);
+  }
   if (httpStatus === 429) throw new CommentReadError('restricted', '请求过于频繁，请稍后再试。');
   if (httpStatus < 200 || httpStatus >= 300) throw new CommentReadError('network', `列表请求失败（HTTP ${httpStatus}）。`);
   if (/<(?:html|!doctype)/i.test(body.slice(0, 500))) throw new CommentReadError('restricted', '接口返回了网页，请重新登录或稍后再试。');
@@ -262,7 +268,7 @@ export function parseVideoList(body: string, requestedCursor: string, httpStatus
   try { payload = record(safeJson(trimToFirstJson(body))); } catch { throw new CommentReadError('invalid', '列表响应不是有效 JSON。'); }
   if (!payload) throw new CommentReadError('invalid', '列表响应结构无效。');
   const code = statusCodeOf(payload);
-  if (code !== '' && code !== '0') throw new CommentReadError('restricted', '未能读取列表，请重新登录后重试。');
+  if (code !== '' && code !== '0') throw new CommentReadError('restricted', `未能读取列表（status_code=${code}，HTTP ${httpStatus}）${body.replace(/\s+/g, ' ').trim().slice(0, 240)}`);
 
   const more = [1, true, '1'].includes(payload.has_more as never);
   if (!more && ![0, false, '0'].includes(payload.has_more as never)) throw new CommentReadError('invalid', '列表结构异常。');
@@ -338,13 +344,14 @@ const PAGE_SCRIPT = [
   A_BOGUS_SOURCE,
   "var PATHS={self:'/aweme/v1/web/user/profile/self/',comments:'/aweme/v1/web/comment/list/',commentReplies:'/aweme/v1/web/comment/list/reply/',likes:'/aweme/v1/web/aweme/favorite/',favorites:'/aweme/v1/web/aweme/listcollection/',danmaku:'/aweme/v1/web/danmaku/get_v2/'};",
   "function mylikeToken(params){var parts=(document.cookie||'').split(';');var tk='';for(var c=0;c<parts.length;c++){var seg=parts[c];while(seg.charAt(0)===' '){seg=seg.substring(1);}if(seg.indexOf('msToken=')===0){tk=seg.substring(8);break;}}if(tk){try{tk=decodeURIComponent(tk);}catch(_e){}params.set('msToken',tk);}}",
+  "function mylikeCookieFp(params){var parts=(document.cookie||'').split(';');var fp='',webid='';for(var i=0;i<parts.length;i++){var seg=parts[i];while(seg.charAt(0)===' '){seg=seg.substring(1);}if(seg.indexOf('s_v_web_id=')===0){fp=seg.substring(11);}else if(seg.indexOf('webid=')===0){webid=seg.substring(6);}}if(fp){try{fp=decodeURIComponent(fp);}catch(_e){}params.set('verifyFp',fp);params.set('fp',fp);}if(webid){try{webid=decodeURIComponent(webid);}catch(_e){}params.set('webid',webid);}}",
   "function mylikeFp(params){params.set('pc_client_type','1');params.set('browser_language',navigator.language||'');params.set('browser_platform',navigator.platform||'');params.set('browser_online',String(navigator.onLine));if(navigator.hardwareConcurrency){params.set('cpu_core_num',String(navigator.hardwareConcurrency));}var ua=navigator.userAgent||'';var ci=ua.indexOf('Chrome/');var chrome='';if(ci>=0){var mm=ua.substring(ci+7).match(/^[0-9.]+/);if(mm){chrome=mm[0];}}if(chrome){params.set('browser_name','Chrome');params.set('browser_version',chrome);params.set('engine_name','Blink');params.set('engine_version',chrome);}var os='';if(ua.indexOf('Windows')>=0){os='Windows';}else if(ua.indexOf('Macintosh')>=0){os='Mac OS';}else if(ua.indexOf('Linux')>=0){os='Linux';}if(os){params.set('os_name',os);}if(typeof screen!=='undefined'){params.set('screen_width',String(screen.width));params.set('screen_height',String(screen.height));}}",
   "function mylikeRequest(request){return new Promise(function(resolve){try{",
   "var op=request.operation;var p=request.parameters||{};var keys=Object.keys(p);var i;",
   "var params=new URLSearchParams({device_platform:'webapp',aid:'6383',channel:'channel_pc_web',version_code:'290100',version_name:'29.1.0',update_version_code:'170400',cookie_enabled:'true',platform:'PC'});",
   "var method='GET';var body=null;var referrer='';var headers={accept:'application/json, text/plain, */*'};var href;",
-  "if(op==='favorites'){mylikeFp(params);params.set('pc_libra_divert','Windows');params.set('publish_video_strategy_type','2');mylikeToken(params);referrer='https://www.douyin.com/user/self?from_tab_name=main&showTab=favorite_collection';method='POST';headers['content-type']='application/x-www-form-urlencoded;charset=UTF-8';headers['x-secsdk-csrf-token']='DOWNGRADE';body=new URLSearchParams({cursor:p.cursor||'0',count:p.count||'20'}).toString();}",
-  "else{for(i=0;i<keys.length;i++){params.set(keys[i],p[keys[i]]);}if(op==='comments'||op==='commentReplies'){if(!params.has('count')){params.set('count','20');}mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.aweme_id||p.item_id||'');}else if(op==='likes'){mylikeToken(params);}else if(op==='danmaku'){mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.item_id||'');}}",
+  "if(op==='favorites'){mylikeFp(params);params.set('pc_libra_divert','Windows');params.set('publish_video_strategy_type','2');mylikeCookieFp(params);mylikeToken(params);referrer='https://www.douyin.com/user/self?from_tab_name=main&showTab=favorite_collection';method='POST';headers['content-type']='application/x-www-form-urlencoded;charset=UTF-8';headers['x-secsdk-csrf-token']='DOWNGRADE';body=new URLSearchParams({cursor:p.cursor||'0',count:p.count||'20'}).toString();}",
+  "else{for(i=0;i<keys.length;i++){params.set(keys[i],p[keys[i]]);}if(op==='comments'||op==='commentReplies'){if(!params.has('count')){params.set('count','20');}mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.aweme_id||p.item_id||'');}else if(op==='likes'){mylikeFp(params);mylikeCookieFp(params);mylikeToken(params);referrer='https://www.douyin.com/user/self?from_tab_name=main&showTab=likes';}else if(op==='danmaku'){mylikeFp(params);mylikeToken(params);referrer='https://www.douyin.com/video/'+(p.item_id||'');}}",
   "var query=params.toString();",
   // Risk-gated private endpoints (reply list, my likes, my collections) are not
   // auto-signed by the mobile WebView page (unlike desktop Electron where the
