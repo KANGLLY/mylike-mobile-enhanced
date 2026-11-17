@@ -6,8 +6,9 @@ export type Scope = { source: Source; search?: string; filter?: LibraryFilter; p
 export type Work = LibraryWork & { liked: boolean; saved: boolean };
 export type Point = { kind: 'video' | 'gallery'; value: number };
 export type Session = { ids: string[]; index: number; mode: 'ordered' | 'shuffle'; point: Point | null };
-export type Preferences = { auto: boolean; rate: number; clear: boolean };
-export const defaultPreferences: Preferences = { auto: false, rate: 1, clear: false };
+export type CommentTheme = 'dark' | 'light';
+export type Preferences = { auto: boolean; rate: number; clear: boolean; danmaku: boolean; commentTheme: CommentTheme };
+export const defaultPreferences: Preferences = { auto: false, rate: 1, clear: false, danmaku: false, commentTheme: 'dark' };
 export const rates = [0.75, 1, 1.25, 1.5, 2];
 export const mobileSchema = `
   CREATE TABLE IF NOT EXISTS mobile_marks (
@@ -81,7 +82,7 @@ export function restoreSession(value: string | null, pool: readonly string[], mo
   return { ids: mode === 'shuffle' ? shuffled(pool) : [...new Set(pool)], index: 0, mode, point: null };
 }
 export function parsePreferences(value: string | null): Preferences {
-  try { const p = JSON.parse(value ?? '{}'); return { auto: p.auto === true, clear: p.clear === true, rate: rates.includes(p.rate) ? p.rate : 1 }; }
+  try { const p = JSON.parse(value ?? '{}'); return { auto: p.auto === true, clear: p.clear === true, danmaku: p.danmaku === true, commentTheme: p.commentTheme === 'light' ? 'light' : 'dark', rate: rates.includes(p.rate) ? p.rate : 1 }; }
   catch { return { ...defaultPreferences }; }
 }
 export function swipeStep(distance: number, velocity: number, extent: number): -1 | 0 | 1 {

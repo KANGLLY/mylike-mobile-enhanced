@@ -75,6 +75,12 @@ export function createStore({ open, mergeLibrary, countDuplicates }: StoreDepend
       `SELECT count(*) AS 'all',COALESCE(sum(${effectiveLike}),0) AS likes,COALESCE(sum(${effectiveSave}),0) AS favorites ${from}`,
     ) ?? { all: 0, likes: 0, favorites: 0 };
   }
+  async function likedExportRows() {
+    await pendingWrites;
+    return (await (await database()).getAllAsync<{ id: string; title: string; author: string; publishedAt: number | null; kind: string; coverUrl: string | null }>(
+      `SELECT w.id,w.title,w.author,w.published_at AS publishedAt,w.kind,w.cover_url AS coverUrl ${from} WHERE ${effectiveLike}=1 ORDER BY w.published_at DESC,w.id DESC`,
+    ));
+  }
   async function readState(key: string) { await pendingWrites; return (await (await database()).getFirstAsync<{ value: string }>('SELECT value FROM mobile_state WHERE key=?', key))?.value ?? null; }
   function writeState(key: string, value: unknown) { return write(async () => { await (await database()).runAsync('INSERT INTO mobile_state(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', key, JSON.stringify(value)); }); }
   async function readBookmark(key: string): Promise<string | null> {
@@ -107,7 +113,7 @@ export function createStore({ open, mergeLibrary, countDuplicates }: StoreDepend
   }
 
   async function duplicateCount(library: LibraryImport) { await pendingWrites; return countDuplicates(library, await database()); }
-  return { database, importCollection, duplicateCount, page, queueIds, work, mark, undoSaved, folders, groups, createFolder, editFolder, assignGroups, resetLocal, searches, addSearch, removeSearch, visit, updateWatchPoint, continuation, history, historyIds, removeHistory, databaseBytes, accountOverview, clearLibrary, counts, readState, writeState, readBookmark, writeBookmarkQueue, writeBookmarkPoint, dates };
+  return { database, importCollection, duplicateCount, page, queueIds, work, mark, undoSaved, folders, groups, createFolder, editFolder, assignGroups, resetLocal, searches, addSearch, removeSearch, visit, updateWatchPoint, continuation, history, historyIds, removeHistory, databaseBytes, accountOverview, clearLibrary, counts, likedExportRows, readState, writeState, readBookmark, writeBookmarkQueue, writeBookmarkPoint, dates };
 }
 export type MobileStore = ReturnType<typeof createStore>;
 export type HistoryWork = Work & { watchedAt: number; pointKind: string | null; pointValue: number | null };

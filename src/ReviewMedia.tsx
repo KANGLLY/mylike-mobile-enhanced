@@ -225,6 +225,7 @@ export function ReviewVideo({
   const player = useVideoPlayer(source, (instance) => {
     instance.staysActiveInBackground = false;
     instance.muted = !active;
+    instance.preservesPitch = true;
     if (!active) instance.bufferOptions = { preferredForwardBufferDuration: 3 };
   });
   const { status } = useEvent(player, 'statusChange', { status: player.status });

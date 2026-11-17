@@ -106,6 +106,7 @@ function Clip({ uri, address, stopVideo, onFailure, showDiagnostic, repeat, paus
   const player = useVideoPlayer(source, (instance) => {
     instance.timeUpdateEventInterval = 0.2;
     instance.staysActiveInBackground = false;
+    instance.preservesPitch = true;
     instance.loop = repeat;
     if (repeat) instance.audioMixingMode = 'mixWithOthers';
     if (!paused && isForeground()) {

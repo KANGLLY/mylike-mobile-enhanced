@@ -36,7 +36,7 @@ test('date filtering binds Beijing month bounds and treats search as literal tex
 test('cancelled short drags and opposite flicks do not advance; malformed preferences recover', () => {
   equal(swipeStep(0, 0, 0), 0);
   equal(swipeStep(20, 1200, 800), 0); equal(swipeStep(-50, 900, 800), 0); equal(swipeStep(-50, -900, 800), 1); equal(swipeStep(300, 0, 800), -1);
-  deepEqual(parsePreferences('{"rate":100,"auto":true,"clear":false}'), { rate: 1, auto: true, clear: false });
+  deepEqual(parsePreferences('{"rate":100,"auto":true,"clear":false}'), { rate: 1, auto: true, clear: false, danmaku: false, commentTheme: 'dark' });
 });
 
 test('the native queue query reads all 10000 works, deduplicates sources, and honors local overrides', () => {

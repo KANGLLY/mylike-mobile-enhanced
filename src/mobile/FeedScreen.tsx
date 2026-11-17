@@ -1,10 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useIsFocused } from '@react-navigation/native';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, FlatList, Image, Modal, Pressable, StatusBar, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, FlatList, Image, Modal, Pressable, StatusBar, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { GestureDetector, GestureHandlerRootView, usePanGesture } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CommentSheet } from '../CommentSheet';
 import { mediaHeaders } from '../douyin';
@@ -13,6 +14,9 @@ import { LibraryScreen, type OpenQueue } from './LibraryScreen';
 import { MediaSlot, type MediaControl, type MediaInfo } from './Media';
 import { rates, type Scope, type Session, type Source } from './model';
 import { SeekRail } from './SeekRail';
+import { DanmakuOverlay } from './Danmaku';
+import { saveWorkMedia, type SaveKind } from './save-media';
+import { FullscreenVideo } from './FullscreenVideo';
 
 import { FolderSheet } from './FolderSheet';
 import { feedChrome, mediaAreaHeight } from './layout';
@@ -70,6 +74,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   const [comments, setComments] = useState(false); const [panel, setPanel] = useState<'options' | 'queue' | 'share' | null>(null); const [avatarFailed, setAvatarFailed] = useState(false);
   const [commentsClosing, setCommentsClosing] = useState(false); const [commentCloseRequest, setCommentCloseRequest] = useState(0);
   const [groupId, setGroupId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false); const [fullscreen, setFullscreen] = useState(false);
   const [foreground, setForeground] = useState(AppState.currentState !== 'background' && AppState.currentState !== 'inactive');
   const x = useSharedValue(0); const photoX = useSharedValue(0); const mediaHeight = useSharedValue(height); const heart = useSharedValue(0);
   const mediaTargetHeight = comments && !commentsClosing ? height * 0.3 : playbackHeight;
@@ -92,6 +97,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   const requestedPhoto = photoPage?.id === id ? photoPage.index : session?.point?.kind === 'gallery' ? session.point.value : 0;
   const photo = current.data && 'images' in current.data ? Math.max(0, Math.min(current.photos - 1, requestedPhoto)) : requestedPhoto;
   const gallery = current.data ? 'images' in current.data : current.work?.kind !== 'video' && Boolean(current.work);
+  const videoUri = current.data && 'candidates' in current.data ? current.data.candidates[0] ?? '' : '';
   const boostable = !gallery || current.hasLive;
   const boosted = playbackStateId.current === id && (edgeHeld || boostLocked) && boostable;
   const mediaPaused = playbackStateId.current === id && paused && !(edgeHeld && boostable);
@@ -111,7 +117,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   useLayoutEffect(() => {
     playbackStateId.current = id;
     setPaused(false); setEdgeHeld(false); setBoostLocked(false); setBoostTarget(false); setPinching(false); setSeeking(false); setReadyId(''); setAvatarFailed(false); setTime({ seconds: 0, duration: 0 });
-    setPrepared(false);
+    setPrepared(false); setFullscreen(false);
   }, [id]);
   useEffect(() => { const subscription = AppState.addEventListener('change', state => { setForeground(state === 'active'); if (state !== 'active') { setEdgeHeld(false); setBoostLocked(false); setBoostTarget(false); setPinching(false); } }); return () => subscription.remove(); }, []);
   useEffect(() => { if (!visible || !focused) { setComments(false); setPanel(null); setEdgeHeld(false); setBoostLocked(false); setBoostTarget(false); setPinching(false); setGroupId(null); } }, [visible, focused]);
@@ -160,6 +166,9 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
   useEffect(() => () => cancelAnimation(mediaHeight), [mediaHeight]);
   // Resize the same route without retaining an offset measured on the old screen.
   useLayoutEffect(() => { cancelAnimation(x); x.value = side === 'author' ? -width : 0; }, [width]);
+  const [captionOpen, setCaptionOpen] = useState(false);
+  useEffect(() => { setCaptionOpen(false); }, [id]);
+  const captionText = current.work?.title || current.data?.title || '抖音作品';
   const liked = marks[id]?.liked ?? current.work?.liked ?? false;
   const saved = marks[id]?.saved ?? current.work?.saved ?? false;
   const like = useCallback(() => { if (id && current.work) { if (!liked) setMark(id, 'liked', true); heart.value = 1; heart.value = withTiming(0, { duration: 750 }); } }, [id, current.work, liked, setMark, heart]);
@@ -180,6 +189,26 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
     if (pending === id && preferences.auto && !next()) setPaused(true);
   }, [pinching, moving, playing, paused, id, preferences.auto, next]);
   function retry() { setPaused(false); control.current?.retry(); }
+  const openFullscreen = useCallback(() => {
+    if (!videoUri) return;
+    setPaused(true);
+    setFullscreen(true);
+    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+  }, [videoUri]);
+  const closeFullscreen = useCallback(() => {
+    setFullscreen(false);
+    setPaused(false);
+    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+  }, []);
+  async function doSave(kind: SaveKind) {
+    if (!current.data || saving) return;
+    setSaving(true);
+    try { const message = await saveWorkMedia(current.data, kind); Alert.alert('保存成功', message); }
+    catch (failure) { Alert.alert('保存失败', failure instanceof Error ? failure.message : '请稍后重试。'); }
+    finally { setSaving(false); }
+  }
+  useEffect(() => { if (!visible || !focused) { setFullscreen(false); } }, [visible, focused]);
+  useEffect(() => () => { void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); }, []);
   const author = current.data?.author || current.work?.author || '未知作者';
   const authorGroup = current.work?.author || author;
   const countLabel = (value: number | undefined, fallback: string) => value === undefined ? fallback : value >= 10000 ? `${(value / 10000).toFixed(1)}万` : String(value);
@@ -193,15 +222,17 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
         <View style={styles.tool}><View style={ui.icon}><Ionicons name="arrow-redo" size={33} color="#fff" /></View><Text style={styles.toolLabel}>{countLabel(previews[workId].data?.statistics?.shares, '分享')}</Text></View>
       </View></>}
   </View> : <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+    {preferences.danmaku && <DanmakuOverlay workId={workId} seconds={time.seconds} durationMs={Math.round((time.duration || 0) * 1000)} playing={playing && !paused && !comments && !edgeHeld} width={width} height={mediaTargetHeight} top={chrome.top + 50} />}
     {!comments && !chromeHidden && <>
       <View style={[styles.caption, captionLayout]} pointerEvents="box-none"><Pressable onPress={() => openSide('author')}><Text style={styles.author}>@{author}</Text></Pressable>
-        <Text pointerEvents="none" numberOfLines={3} style={styles.description}>{current.work?.title || current.data?.title || '抖音作品'}</Text>
+        <Text pointerEvents="none" numberOfLines={captionOpen ? undefined : 3} style={styles.description}>{captionText}</Text>
+        {captionText.length > 50 && <Pressable accessibilityRole="button" accessibilityLabel={captionOpen ? '收起文案' : '展开全部文案'} onPress={() => setCaptionOpen(value => !value)} hitSlop={8}><Text style={styles.captionToggle}>{captionOpen ? '收起' : '展开'}</Text></Pressable>}
         {gallery && <Text pointerEvents="none" style={styles.note}>{current.livePhase === 'loading' ? '正在准备实况片段…' : current.hasLive ? '实况图集' : current.work?.kind === 'live-gallery' ? '当前页无可用实况片段' : '图集'}{current.musicUnavailable ? ' · 配乐暂不可用' : ''}</Text>}
       </View>
       <View style={[styles.toolbar, toolbarLayout]}>
         <Pressable accessibilityLabel="打开作者页" onPress={() => openSide('author')} style={styles.avatar}>{current.data?.authorAvatar && !avatarFailed ? <Image source={{ uri: current.data.authorAvatar, headers: mediaHeaders }} style={{ width: 42, height: 42, borderRadius: 21 }} onError={() => setAvatarFailed(true)} /> : <Text style={ui.text}>{author.slice(0, 1)}</Text>}</Pressable>
         <View style={styles.tool}><IconButton name="heart" label="切换本机喜欢" size={34} color={liked ? '#fc2f56' : '#fff'} onPress={() => { if (current.work) setMark(id, 'liked', !liked); }} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.likes, '喜欢')}</Text></View>
-        <View style={styles.tool}><IconButton name="chatbubble-ellipses" label="打开游客评论预览" size={33} onPress={openComments} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.comments, '评论')}</Text></View>
+        <View style={styles.tool}><IconButton name="chatbubble-ellipses" label="查看评论" size={33} onPress={openComments} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.comments, '评论')}</Text></View>
         <View style={styles.tool}><IconButton name="star" label="切换本机收藏，长按管理收藏夹" size={34} color={saved ? '#ffc345' : '#fff'} onPress={() => { if (current.work) setMark(id, 'saved', !saved); }} onLongPress={() => { if (current.work) setGroupId(id); }} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.favorites, '收藏')}</Text></View>
         <View style={styles.tool}><IconButton name="arrow-redo" label="分享公开作品链接" size={33} onPress={() => setPanel('share')} /><Text style={styles.toolLabel}>{countLabel(current.data?.statistics?.shares, '分享')}</Text></View>
       </View>
@@ -232,7 +263,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
       {!comments && !chromeHidden && <View pointerEvents="box-none" style={[styles.header, { top: chrome.top, left: Math.max(5, insets.left), right: Math.max(5, insets.right) }]}>
         {onBack ? <IconButton name="chevron-back" size={22} color="#ffffffb3" label="返回内容库" onPress={onBack} /> : <View style={ui.icon} />}
         {onSource ? <View style={styles.channels}>{([['all','推荐'],['likes','喜欢'],['favorites','收藏']] as const).map(([key, label]) => <Pressable key={key} style={styles.channelTab} onPress={() => { if (key !== source) onSource(key); else void refresh(); }}><Text style={[styles.channel, key === source && styles.channelActive]}>{label}</Text>{key === source && <View style={styles.channelUnderline} />}</Pressable>)}</View> : <Text style={ui.text}>{title || '回看'}</Text>}
-        <View style={ui.icon} />
+        <Pressable accessibilityRole="button" accessibilityLabel={preferences.danmaku ? '关闭弹幕' : '开启弹幕'} onPress={() => setPreferences({ danmaku: !preferences.danmaku })} hitSlop={10} style={styles.danmakuToggle}><Text style={[styles.danmakuToggleText, preferences.danmaku && styles.danmakuToggleOn]}>弹</Text></Pressable>
       </View>}
       {error && !chromeHidden && <Pressable style={[styles.error, { top: chrome.top + 65 }]} onPress={() => void refresh()}><Text style={ui.error}>{error} · 点按重试</Text></Pressable>}
       {!chromeHidden && <Animated.View pointerEvents="none" style={[styles.heart, heartStyle]}><Ionicons name="heart" size={110} color="#fc2f56" /></Animated.View>}
@@ -246,6 +277,12 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
         {comments && id && <CommentSheet key={id} workId={id} height={height * 0.7} closeRequest={commentCloseRequest} onClosing={beginCommentClose} onClose={closeComments} />}
       </GestureHandlerRootView>
     </Modal>
+    <Modal transparent visible={fullscreen} animationType="fade" onRequestClose={closeFullscreen}>
+      <View style={styles.fsRoot}>
+        <FullscreenVideo uri={videoUri} startSeconds={time.seconds} rate={preferences.rate} onClose={closeFullscreen} />
+        <Pressable accessibilityRole="button" accessibilityLabel="退出全屏" onPress={closeFullscreen} style={[styles.fsClose, { top: insets.top + 8, right: Math.max(8, insets.right) }]}><Ionicons name="close" size={26} color="#fff" /></Pressable>
+      </View>
+    </Modal>
     <ActionSheet visible={panel !== null} title={panel === 'queue' ? '播放队列' : panel === 'share' ? '分享作品' : '播放选项'} onClose={() => setPanel(null)}>
           {panel === 'queue' ? <><View style={styles.panelHeading}><Text style={ui.title}>播放队列 · {session?.ids.length ?? 0}</Text><Button title="返回" onPress={() => setPanel('options')} /></View>
             <FlatList data={session?.ids ?? []} initialNumToRender={12} keyExtractor={item => item} style={{ maxHeight: height * 0.5 }}
@@ -253,9 +290,15 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
           </> : panel === 'share' ? <ShareActions key={id} id={id} title={current.work?.title || current.data?.title || '抖音作品'} gallery={gallery} onShared={() => setPanel(null)} /> : <><View style={styles.options}>
             <Button title={preferences.auto ? '自动连播：开' : '自动连播：关'} selected={preferences.auto} onPress={() => setPreferences({ auto: !preferences.auto })} />
             <Button title={preferences.clear ? '退出清屏' : '清屏'} selected={preferences.clear} onPress={() => setPreferences({ clear: !preferences.clear })} />
+            <Button title={preferences.danmaku ? '弹幕：开' : '弹幕：关'} selected={preferences.danmaku} onPress={() => setPreferences({ danmaku: !preferences.danmaku })} />
             <Button title="播放队列" onPress={() => setPanel('queue')} /><Button title="重新打乱" onPress={() => { setPanel(null); reshuffle(); }} /><Button title="重新取链" onPress={() => { setPanel(null); retry(); }} />
+          </View><View style={styles.options}>
+            {!gallery && videoUri ? <Button title="全屏播放" onPress={() => { setPanel(null); openFullscreen(); }} /> : null}
+            {current.data && 'candidates' in current.data && current.data.candidates.length > 0 && <Button title={saving ? '保存中…' : '保存视频'} disabled={saving} onPress={() => { void doSave('video'); }} />}
+            {current.data && 'images' in current.data && current.data.images.length > 0 && <Button title={saving ? '保存中…' : '保存图片'} disabled={saving} onPress={() => { void doSave('images'); }} />}
+            {current.data && current.data.musicCandidates && current.data.musicCandidates.length > 0 && <Button title={saving ? '保存中…' : '保存音频'} disabled={saving} onPress={() => { void doSave('audio'); }} />}
           </View><Text style={ui.muted}>播放速度</Text><View style={styles.options}>{rates.map(rate => <Button key={rate} title={`${rate}×`} selected={preferences.rate === rate} onPress={() => { setBoostLocked(false); setPreferences({ rate }); }} />)}</View>
-            <Text style={ui.muted}>喜欢和收藏仅修改本机。评论目前只提供游客有限预览。</Text><Button title="继续播放" onPress={() => setPanel(null)} />
+            <Text style={ui.muted}>喜欢和收藏仅修改本机。评论可选择登录抖音后查看完整内容。</Text><Button title="继续播放" onPress={() => setPanel(null)} />
           </>}
     </ActionSheet>
     {groupId && <FolderSheet workId={groupId} onClose={() => setGroupId(null)} />}
@@ -268,9 +311,10 @@ const styles = StyleSheet.create({
   channels: { flexDirection: 'row', alignItems: 'center', gap: 22 }, channelTab: { height: 44, justifyContent: 'center', paddingBottom: 5 },
   channel: { color: '#ffffff70', fontSize: 14.5, lineHeight: 20, fontWeight: '500', textShadowColor: '#0003', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, channelActive: { color: '#ffffffd9', fontSize: 15, fontWeight: '600' },
   channelUnderline: { position: 'absolute', bottom: 5, alignSelf: 'center', width: 18, height: 2, borderRadius: 2, backgroundColor: '#ffffffbf' },
+  danmakuToggle: { width: 30, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff14' }, danmakuToggleText: { color: '#ffffff8c', fontSize: 12, fontWeight: '600' }, danmakuToggleOn: { color: '#ffd25e' },
   caption: { position: 'absolute', left: 12, right: 78, zIndex: 2 },
   author: { color: '#fff', fontSize: 17, lineHeight: 23, fontWeight: '600', marginBottom: 8, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
-  description: { color: '#ffffffe6', fontSize: 15.5, lineHeight: 22, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, note: { color: '#ddd', fontSize: 10, marginTop: 5 },
+  description: { color: '#ffffffe6', fontSize: 15.5, lineHeight: 22, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, captionToggle: { color: '#ffffffcc', fontSize: 13, fontWeight: '600', marginTop: 3, textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 }, note: { color: '#ddd', fontSize: 10, marginTop: 5 },
   toolbar: { position: 'absolute', right: 7, alignItems: 'center', zIndex: 2 }, avatar: { width: 46, height: 46, borderRadius: 23, borderWidth: 1.5, borderColor: '#fff', alignItems: 'center', justifyContent: 'center', backgroundColor: '#52626a', marginBottom: 6 },
   tool: { alignItems: 'center' }, toolLabel: { color: '#ffffffe6', fontSize: 12, lineHeight: 17, fontWeight: '400', textShadowColor: '#0005', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
   pause: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, alignItems: 'center', justifyContent: 'center' },
@@ -280,4 +324,6 @@ const styles = StyleSheet.create({
   failure: { position: 'absolute', top: '37%', left: 35, right: 35, alignItems: 'center', gap: 18 }, error: { position: 'absolute', top: 65, alignSelf: 'center', backgroundColor: '#222d', zIndex: 8 }, heart: { position: 'absolute', top: '40%', alignSelf: 'center', zIndex: 6 },
   authorHeader: { height: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, panelHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, queueItem: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 12, marginBottom: 3, borderRadius: 5 },
+  fullscreenBtn: { position: 'absolute', alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#00000066' }, fullscreenText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  fsRoot: { flex: 1, backgroundColor: '#000' }, fsClose: { position: 'absolute', width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: '#00000066' },
 });
