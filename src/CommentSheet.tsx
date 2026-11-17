@@ -188,7 +188,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const offset = useSharedValue(height); const closing = useSharedValue(false); const previousClose = useRef(closeRequest);
   const scrollY = useSharedValue(0); const start = useSharedValue({ x: 0, y: 0 }); const [dragging, setDragging] = useState(false);
   const current = result?.workId === workId ? result : null;
-  const listRef = useRef<any>(null); const scrollRestored = useRef(false); const restoredShared = useSharedValue(false);
+  const listRef = useRef<any>(null); const scrollRestored = useRef(false); const restoredShared = useSharedValue(false); const scrolledShared = useSharedValue(false);
   const saveScroll = useCallback((id: string, y: number) => { scrollPositions[id] = y; }, []);
   const onContentSize = useCallback(() => {
     if (scrollRestored.current) return;
@@ -324,7 +324,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     onFinalize: () => { 'worklet'; scheduleOnRN(setDragging, false); },
   });
   const native = useNativeGesture(); const listGesture = useSimultaneousGestures(listPan, native);
-  const scroll = useAnimatedScrollHandler({ onScroll: event => { scrollY.value = Math.max(0, event.contentOffset.y); if (restoredShared.value) scheduleOnRN(saveScroll, workId, event.contentOffset.y); } });
+  const scroll = useAnimatedScrollHandler({ onScroll: event => { scrollY.value = Math.max(0, event.contentOffset.y); if (event.contentOffset.y > 80) scrolledShared.value = true; if (restoredShared.value) scheduleOnRN(saveScroll, workId, event.contentOffset.y); } });
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
   const retry = () => { if (!refreshing) setAttempt(value => value + 1); };
   const retryFull = () => { if (!fullLoading) void loadFull(fullComments.length ? (fullCursor ?? '0') : '0', false); };
@@ -350,8 +350,10 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
         {!fullLoading || fullComments.length > 0 ? <GestureDetector gesture={listGesture}><Animated.FlatList ref={listRef} onContentSizeChange={onContentSize} data={rows} keyExtractor={row => row.key} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
           initialNumToRender={10} maxToRenderPerBatch={8} windowSize={5} scrollEnabled={!dragging} onScroll={scroll} scrollEventThrottle={16} bounces={false} overScrollMode="never"
           ListEmptyComponent={!fullLoading && !fullError ? <Text style={styles.meta}>还没有评论。</Text> : undefined}
+          onEndReachedThreshold={0.7}
+          onEndReached={() => { if (fullHasMore && !fullLoading && !fullLoadingMore && scrolledShared.value && fullCursor) void loadFull(fullCursor, true); }}
           ListFooterComponent={fullHasMore
-            ? <Pressable accessibilityRole="button" disabled={fullLoadingMore} onPress={() => { if (fullCursor && !fullLoadingMore) void loadFull(fullCursor, true); }} style={styles.more}><Text style={styles.retry}>{fullLoadingMore ? '加载中…' : '加载更多评论'}</Text></Pressable>
+            ? (fullLoadingMore ? <ActivityIndicator color={C.spinner} style={styles.more} /> : undefined)
             : rows.length ? <Text style={styles.footer}>已展示全部评论</Text> : undefined}
           renderItem={({ item }) => {
             if (item.type === 'comment') {
