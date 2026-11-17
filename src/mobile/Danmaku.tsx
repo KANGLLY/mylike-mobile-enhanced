@@ -65,6 +65,7 @@ export function DanmakuOverlay({ workId, seconds, durationMs, playing, playbackR
   const [items, setItems] = useState<DanmakuItem[]>([]);
   const [flying, setFlying] = useState<FlyingBullet[]>([]);
   const [emoji, setEmoji] = useState<Record<string, string>>({});
+  const [retryTick, setRetryTick] = useState(0);
 
   const fired = useRef<Set<string>>(new Set());
   const carryOverRef = useRef<DanmakuItem[]>([]);
@@ -79,6 +80,10 @@ export function DanmakuOverlay({ workId, seconds, durationMs, playing, playbackR
   const widthRef = useRef(width); widthRef.current = width;
   const fontSizeRef = useRef(fontSize); fontSizeRef.current = fontSize;
   const fetchedWorkRef = useRef('');
+  const activeWorkRef = useRef(workId); activeWorkRef.current = workId;
+  const mountedRef = useRef(true);
+  const retryCountRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const metrics = useMemo(() => danmakuMetrics(fontSize, height, lines), [fontSize, height, lines]);
   const metricsRef = useRef(metrics); metricsRef.current = metrics;
@@ -115,7 +120,14 @@ export function DanmakuOverlay({ workId, seconds, durationMs, playing, playbackR
     syncClockRate(effectiveRate);
   }, [effectiveRate, syncClockRate]);
 
-  useEffect(() => () => { cancelAnimation(clockMsSV); }, [clockMsSV]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+      cancelAnimation(clockMsSV);
+    };
+  }, [clockMsSV]);
 
   useEffect(() => {
     let alive = true;
@@ -125,12 +137,15 @@ export function DanmakuOverlay({ workId, seconds, durationMs, playing, playbackR
 
   // Reset state only when switching works (never on durationMs jitter).
   useEffect(() => {
+    if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+    retryCountRef.current = 0;
     fetchedWorkRef.current = '';
     fired.current = new Set();
     carryOverRef.current = [];
     carryExpireRef.current = 0;
     loopEpochRef.current = 0;
     flyingRef.current = [];
+    setRetryTick(0);
     setFlying([]);
     setItems([]);
     syncClockRate(effectiveRate, true);
@@ -138,26 +153,41 @@ export function DanmakuOverlay({ workId, seconds, durationMs, playing, playbackR
   }, [workId]);
 
   // Fetch the whole clip's danmaku once per work (window = [0, duration]).
+  // Guard completions against activeWorkRef rather than effect-scoped cleanup so
+  // minor durationMs updates while a request is in flight never discard its result.
   useEffect(() => {
     if (!workId || durationMs <= 0 || fetchedWorkRef.current === workId) return;
     fetchedWorkRef.current = workId;
-    let alive = true;
+    const requestedWorkId = workId;
+    const targetDuration = durationMs;
     void (async () => {
       try {
         const response = await request('danmaku', {
-          item_id: workId, duration: String(durationMs), start_time: '0', end_time: String(durationMs), item_type: '0',
+          item_id: requestedWorkId, duration: String(targetDuration), start_time: '0', end_time: String(targetDuration), item_type: '0',
         }, 10000);
         const page = parseDanmakuList(response.body, response.status);
-        if (alive && page.items.length) {
+        if (!mountedRef.current || activeWorkRef.current !== requestedWorkId) return;
+        retryCountRef.current = 0;
+        if (page.items.length) {
           const sorted = [...page.items].sort((a, b) => a.offsetMs - b.offsetMs);
           setItems(sorted);
         }
       } catch {
-        if (alive && fetchedWorkRef.current === workId) fetchedWorkRef.current = '';
+        if (!mountedRef.current || activeWorkRef.current !== requestedWorkId) return;
+        if (fetchedWorkRef.current === requestedWorkId) fetchedWorkRef.current = '';
+        if (retryCountRef.current < 2 && !retryTimerRef.current) {
+          const delay = retryCountRef.current === 0 ? 900 : 2200;
+          retryCountRef.current += 1;
+          retryTimerRef.current = setTimeout(() => {
+            retryTimerRef.current = null;
+            if (mountedRef.current && activeWorkRef.current === requestedWorkId) {
+              setRetryTick(value => value + 1);
+            }
+          }, delay);
+        }
       }
     })();
-    return () => { alive = false; };
-  }, [workId, durationMs, request]);
+  }, [workId, durationMs, retryTick, request]);
 
   // Smooth playhead anchor between 500ms timeUpdate ticks (and during long-press 2×
   // where FeedScreen defers time updates until finger release); on natural loop,

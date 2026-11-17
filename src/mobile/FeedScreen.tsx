@@ -32,7 +32,7 @@ import { usePrefetch } from './usePrefetch';
 import { createPlaybackHandoff } from './playback';
 
 type Side = 'feed' | 'author';
-const emptyInfo: MediaInfo = { id: '', work: null, data: null, error: '', photos: 1, hasLive: false, musicUnavailable: false, livePhase: 'none' };
+const emptyInfo: MediaInfo = { id: '', work: null, data: null, error: '', photos: 1, hasLive: false, musicUnavailable: false, livePhase: 'none', duration: 0 };
 function QueueRow({ id, index, active, onPress }: { id: string; index: number; active: boolean; onPress: () => void }) {
   const { store } = useMobile(); const { work: readWork } = store;
   const [title, setTitle] = useState(id);
@@ -229,7 +229,7 @@ export function FeedScreen({ source = 'all', visible = true, initial, scope: sup
         <View style={styles.tool}><View style={ui.icon}><Ionicons name="arrow-redo" size={33} color="#fff" /></View><Text style={styles.toolLabel}>{countLabel(previews[workId].data?.statistics?.shares, '分享')}</Text></View>
       </View></>}
   </View> : <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-    {preferences.danmaku && <DanmakuOverlay workId={workId} seconds={time.seconds} durationMs={Math.round((time.duration || 0) * 1000)} playing={playing && !mediaPaused && !comments} playbackRate={boosted ? 2 : preferences.rate} seekKey={seekSeq} width={width} height={mediaTargetHeight} top={chrome.top + 50} opacity={preferences.danmakuOpacity} fontSize={preferences.danmakuFontSize} speed={preferences.danmakuSpeed} lines={preferences.danmakuLines} />}
+    {preferences.danmaku && <DanmakuOverlay workId={workId} seconds={time.seconds} durationMs={Math.round((time.duration > 0 ? time.duration : current.duration) * 1000)} playing={playing && !mediaPaused && !comments} playbackRate={boosted ? 2 : preferences.rate} seekKey={seekSeq} width={width} height={mediaTargetHeight} top={chrome.top + 50} opacity={preferences.danmakuOpacity} fontSize={preferences.danmakuFontSize} speed={preferences.danmakuSpeed} lines={preferences.danmakuLines} />}
     {!comments && !chromeHidden && <>
       <View style={[styles.caption, captionLayout]} pointerEvents="box-none"><Pressable onPress={() => openSide('author')}><Text style={styles.author}>@{author}</Text></Pressable>
         <Text pointerEvents="none" numberOfLines={captionOpen ? undefined : 3} style={styles.description}>{captionText}</Text>

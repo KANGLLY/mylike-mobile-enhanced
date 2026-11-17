@@ -14,7 +14,7 @@ import { createFramePrewarm, createPlaybackIntent, resumeSeekTarget, type Playba
 import { createFrameProbe, createPlaybackStartProbe } from './frame-metrics';
 
 export type MediaControl = { id: string; retry: () => void; seek: ((seconds: number) => void) | null; silence?: () => void };
-export type MediaInfo = { id: string; work: Work | null; data: MediaResult | null; error: string; photos: number; hasLive: boolean; musicUnavailable: boolean; livePhase: 'none' | 'loading' | 'ready' | 'failed' };
+export type MediaInfo = { id: string; work: Work | null; data: MediaResult | null; error: string; photos: number; hasLive: boolean; musicUnavailable: boolean; livePhase: 'none' | 'loading' | 'ready' | 'failed'; duration: number };
 export function Poster({ work, fit = 'contain' }: { work: Pick<Work, 'title' | 'coverUrl' | 'kind'> | null; fit?: 'contain' | 'cover' }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [work?.coverUrl]);
@@ -34,6 +34,7 @@ export const MediaSlot = memo(function MediaSlot({ id, current, active, warm, pr
   const [waiting, setWaiting] = useState(false); const [musicUnavailable, setMusicUnavailable] = useState(false); const [liveFailed, setLiveFailed] = useState(false);
   const [visibleFrame, setVisibleFrame] = useState<object | null>(null);
   const [livePhase, setLivePhase] = useState<MediaInfo['livePhase']>('none');
+  const [videoDuration, setVideoDuration] = useState(0);
   const lastTime = useRef(point?.kind === 'video' ? point.value : 0);
   const currentRole = useRef(current); currentRole.current = current;
   const preloadFailed = useRef(false);
@@ -72,16 +73,17 @@ export const MediaSlot = memo(function MediaSlot({ id, current, active, warm, pr
   // An old player's delayed event cannot uncover a newly created player.
   const frameToken = useMemo(() => ({}), [uri, keepVideo]);
   const revealFrame = useCallback(() => setVisibleFrame(frameToken), [frameToken]);
+  useLayoutEffect(() => { setVideoDuration(0); }, [id, uri]);
   useLayoutEffect(() => { preparedVideo.current = keepVideo; }, [keepVideo]);
   useLayoutEffect(() => {
-    onInfo({ id, work, data, error: failure, photos: album?.images.length ?? 1, hasLive: Boolean(frame?.liveCandidates.length) && !liveFailed, musicUnavailable, livePhase });
-  }, [id, work, data, failure, album, frame, liveFailed, musicUnavailable, livePhase, onInfo]);
+    onInfo({ id, work, data, error: failure, photos: album?.images.length ?? 1, hasLive: Boolean(frame?.liveCandidates.length) && !liveFailed, musicUnavailable, livePhase, duration: videoDuration });
+  }, [id, work, data, failure, album, frame, liveFailed, musicUnavailable, livePhase, videoDuration, onInfo]);
   useEffect(() => { if (current && failure) onReady(id); }, [current, failure, id, onReady]);
   const clipFailed = useCallback(() => setLiveFailed(true), []);
   const musicFailed = useCallback(() => setMusicUnavailable(true), []);
   return <View style={[StyleSheet.absoluteFill, styles.surface]}>
     {uri && keepVideo && <Video key={uri} id={id} uri={uri} current={current} active={active} prime={warm && !current} prepare={prepare} paused={paused} boosted={boosted} seeking={seeking} rate={rate} auto={auto}
-      width={width} height={height} sourceSize={size} allowZoom={allowZoom} position={lastTime} control={localControl} handoff={handoff} onFrame={revealFrame} onTime={onTime} onReady={onReady} onEnd={onEnd} onPause={onPause} onFailure={() => { if (!currentRole.current) preloadFailed.current = true; setCandidate(n => n === candidate ? n + 1 : n); }} />}
+      width={width} height={height} sourceSize={size} allowZoom={allowZoom} position={lastTime} control={localControl} handoff={handoff} onFrame={revealFrame} onDuration={setVideoDuration} onTime={onTime} onReady={onReady} onEnd={onEnd} onPause={onPause} onFailure={() => { if (!currentRole.current) preloadFailed.current = true; setCandidate(n => n === candidate ? n + 1 : n); }} />}
     {!album && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: keepVideo && visibleFrame === frameToken ? 0 : 1 }]}><Poster work={work} fit={videoFit(width, height, size, allowZoom)} /></View>}
     {album && <Gallery id={id} images={album.images} photo={photo} width={width} x={photoX} current={current} active={active} retained={retained}
       paused={paused} boosted={boosted} rate={rate} stopClip={stopClip} onReady={onReady} onUnavailable={clipFailed} onPhase={setLivePhase} />}
@@ -89,9 +91,9 @@ export const MediaSlot = memo(function MediaSlot({ id, current, active, warm, pr
     {waiting && current && active && <ActivityIndicator color="#fff" style={styles.wait} />}
   </View>;
 });
-function Video({ id, uri, current, active, prime, prepare, paused, boosted, seeking, rate, auto, width, height, sourceSize, allowZoom, position, control, handoff, onFrame, onTime, onReady, onEnd, onPause, onFailure }: {
+function Video({ id, uri, current, active, prime, prepare, paused, boosted, seeking, rate, auto, width, height, sourceSize, allowZoom, position, control, handoff, onFrame, onDuration, onTime, onReady, onEnd, onPause, onFailure }: {
   id: string; uri: string; current: boolean; active: boolean; prime: boolean; prepare: boolean; paused: boolean; boosted: boolean; seeking: boolean; rate: number; auto: boolean;
-  width: number; height: number; sourceSize?: MediaSize; allowZoom: boolean; position: RefObject<number>; control: RefObject<MediaControl | null>; handoff: PlaybackHandoff; onTime: (id: string, seconds: number, duration: number, force: boolean) => void;
+  width: number; height: number; sourceSize?: MediaSize; allowZoom: boolean; position: RefObject<number>; control: RefObject<MediaControl | null>; handoff: PlaybackHandoff; onDuration?: (seconds: number) => void; onTime: (id: string, seconds: number, duration: number, force: boolean) => void;
   onFrame: () => void; onReady: (id: string) => void; onEnd: () => boolean; onPause: () => void; onFailure: () => void;
 }) {
   const source = useMemo(() => ({ uri, headers: mediaHeaders }), [uri]);
@@ -105,6 +107,7 @@ function Video({ id, uri, current, active, prime, prepare, paused, boosted, seek
   const track = useEvent(player, 'videoTrackChange', { videoTrack: player.videoTrack });
   // Detail dimensions describe display orientation; native tracks can report coded orientation.
   const size = sourceSize ?? track.videoTrack?.size ?? metadata?.availableVideoTracks[0]?.size;
+  const knownDuration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : Number.isFinite(metadata?.duration) && (metadata?.duration ?? 0) > 0 ? metadata!.duration : 0;
   const fit = videoFit(width, height, size, allowZoom);
   const [frame, setFrame] = useState(false); const [waiting, setWaiting] = useState(false); const restored = useRef(false);
   const decoded = useRef(false); const sampleTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -115,7 +118,8 @@ function Video({ id, uri, current, active, prime, prepare, paused, boosted, seek
   const primeAllowed = prime && (prepare || prewarm.ticket() !== null);
   const recovery = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wanted = active && !paused && !seeking;
-  const callbacks = useRef({ onTime, onReady, onEnd, onPause, onFailure, active, current, auto, wanted, prime, rate }); callbacks.current = { onTime, onReady, onEnd, onPause, onFailure, active, current, auto, wanted, prime, rate };
+  const callbacks = useRef({ onDuration, onTime, onReady, onEnd, onPause, onFailure, active, current, auto, wanted, prime, rate }); callbacks.current = { onDuration, onTime, onReady, onEnd, onPause, onFailure, active, current, auto, wanted, prime, rate };
+  useLayoutEffect(() => { if (knownDuration > 0) callbacks.current.onDuration?.(knownDuration); }, [knownDuration]);
   const cancelPrimeTimeout = useCallback(() => { if (primeTimeout.current !== null) clearTimeout(primeTimeout.current); primeTimeout.current = null; }, []);
   const cadence = useMemo(() => ({ value: 0.5 }), [player]);
   const updateInterval = useCallback((value: number) => { if (cadence.value !== value) { player.timeUpdateEventInterval = value; cadence.value = value; } }, [cadence, player]);

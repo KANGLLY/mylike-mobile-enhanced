@@ -163,3 +163,37 @@ test('favourites reads POST cursor/count with the csrf downgrade header', async 
   equal(init.body, 'cursor=0&count=20');
   ok(requestedUrl.includes('a_bogus='), 'signs favourites POST with an a_bogus token');
 });
+
+test('danmaku reads include cookie fingerprint, msToken, referrer and a_bogus', async () => {
+  const script = buildBridgeScript({
+    id: 'r6',
+    operation: 'danmaku',
+    parameters: { item_id: '7708361831513969811', duration: '15000', start_time: '0', end_time: '15000', item_type: '0' },
+    timeout: 5_000,
+  });
+  const captured: string[] = [];
+  let requestedUrl = ''; let init: any = null;
+  const context = {
+    window: { ReactNativeWebView: { postMessage: (value: string) => captured.push(value) } },
+    navigator: {
+      language: 'zh-CN', platform: 'Win32', onLine: true, hardwareConcurrency: 8,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+    },
+    document: { cookie: 'msToken=tok; s_v_web_id=verify_abc123; webid=7362810250930783783' },
+    screen: { width: 1280, height: 800 },
+    console: { error() {}, log() {}, warn() {} },
+    URLSearchParams, AbortController, setTimeout, clearTimeout,
+    fetch: (url: string, options: any) => { requestedUrl = url; init = options; return Promise.resolve({ status: 200, text: () => Promise.resolve('{"status_code":0,"danmaku_list":[]}') }); },
+  };
+  runInNewContext(script, context, { timeout: 2_000 });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  equal(captured.length, 1);
+  ok(requestedUrl.startsWith('https://www.douyin.com/aweme/v1/web/danmaku/get_v2/?'), 'hits the danmaku endpoint');
+  ok(requestedUrl.includes('item_id=7708361831513969811'));
+  ok(requestedUrl.includes('msToken=tok'));
+  ok(requestedUrl.includes('verifyFp=verify_abc123'));
+  ok(requestedUrl.includes('fp=verify_abc123'));
+  ok(requestedUrl.includes('webid=7362810250930783783'));
+  equal(init.referrer, 'https://www.douyin.com/video/7708361831513969811');
+  ok(requestedUrl.includes('a_bogus='), 'signs danmaku with an a_bogus token');
+});

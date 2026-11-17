@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { syncDouyinLibrary, type CapturePage } from '../src/mobile/sync-library.ts';
+import {
+  formatSyncDiagnostic,
+  syncDouyinLibrary,
+  type CaptureBatchResult,
+  type CapturePage,
+  type SyncCheckpoint,
+} from '../src/mobile/sync-library.ts';
 import type { LibraryImport } from '../src/library-format.ts';
 
-function page(ids: string[]): string {
+function page(ids: string[], opts?: { hasMore?: number; cursor?: string }): string {
   return JSON.stringify({
     status_code: 0,
-    has_more: 0,
+    has_more: opts?.hasMore ?? 0,
+    max_cursor: opts?.cursor ?? '0',
     aweme_list: ids.map((id) => ({
       aweme_id: id,
       desc: `video ${id}`,
@@ -68,11 +75,108 @@ test('syncDouyinLibrary supports separate likes/favorites sync and full end-to-e
   assert.equal(calls.length, 1);
   assert.equal(calls[0].kind, 'likes');
   assert.equal(calls[0].maxScrolls, 1500);
-  assert.equal(calls[0].timeoutMs, 600_000);
+  assert.equal(calls[0].timeoutMs, 900_000);
 
   const favOnly = await syncDouyinLibrary(capture, async (file) => { imports.push(file); }, undefined, undefined, 'top', 'favorites');
   assert.deepEqual(favOnly, { liked: 0, saved: 1 });
   assert.equal(calls.length, 2);
   assert.equal(calls[1].kind, 'favorites');
   assert.equal(calls[1].maxScrolls, 4);
+});
+
+test('syncDouyinLibrary flushes batches incrementally and saves resumable checkpoint + diagnostic', async () => {
+  const checkpoints: SyncCheckpoint[] = [];
+  const imports: LibraryImport[] = [];
+
+  // 12 pages interrupted at page 12 with rate_limit while has_more=1 and cursor=1700000000999
+  const capture = async (kind: 'likes' | 'favorites', options?: { onPage?: (p: CapturePage) => void; resumeCursor?: string | null; mode?: string }): Promise<CaptureBatchResult> => {
+    const pages: CapturePage[] = [];
+    for (let i = 1; i <= 12; i++) {
+      const p: CapturePage = {
+        status: 200,
+        engine: 'direct',
+        cursor: i === 1 ? '0' : `17000000000${i - 1}`,
+        body: page([`7300000000000000${String(i).padStart(3, '0')}`], { hasMore: 1, cursor: `1700000000${String(i).padStart(3, '0')}` }),
+      };
+      pages.push(p);
+      options?.onPage?.(p);
+    }
+    return {
+      pages,
+      diagnostic: {
+        reason: 'rate_limit',
+        engine: 'direct',
+        pages: 12,
+        hasMore: true,
+        nextCursor: '1700000000012',
+        lastStatus: 429,
+        elapsedMs: 4200,
+      },
+    };
+  };
+
+  const firstRun = await syncDouyinLibrary(
+    capture,
+    async (file) => { imports.push(file); },
+    undefined,
+    undefined,
+    'full',
+    'likes',
+    { onCheckpoint: (cp) => { checkpoints.push(cp); } },
+  );
+
+  assert.equal(firstRun.liked, 12);
+  // Flushed at page 10 (10 items) + final flush (2 items)
+  assert.equal(imports.length, 2);
+  assert.equal(imports[0].works.length, 10);
+  assert.equal(imports[1].works.length, 2);
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].resumeCursor, '1700000000012');
+  assert.equal(checkpoints[0].receivedCount, 12);
+  assert.equal(checkpoints[0].diagnostic.reason, 'rate_limit');
+  assert.ok(formatSyncDiagnostic(checkpoints[0].diagnostic).includes('直连分页'));
+
+  // 'top' mode must preserve existing deeper resumeCursor while updating diagnostic
+  let seenResumeInTop: string | null | undefined;
+  await syncDouyinLibrary(
+    async (_k, opts) => {
+      seenResumeInTop = opts?.resumeCursor;
+      const p: CapturePage = { status: 200, engine: 'scroll', body: page(['7300000000000000999'], { hasMore: 1, cursor: '1700000000900' }) };
+      opts?.onPage?.(p);
+      return { pages: [p], diagnostic: { reason: 'top_done', engine: 'scroll', hasMore: true, nextCursor: '1700000000900' } };
+    },
+    async () => {},
+    undefined,
+    undefined,
+    'top',
+    'likes',
+    { previousCheckpoint: { likes: checkpoints[0] }, onCheckpoint: (cp) => { checkpoints.push(cp); } },
+  );
+  assert.equal(seenResumeInTop ?? null, null);
+  assert.equal(checkpoints[1].resumeCursor, '1700000000012');
+
+  // 'resume' mode forwards resumeCursor and clears it once has_more=0 completes
+  let seenResumeCursor: string | null | undefined;
+  await syncDouyinLibrary(
+    async (_k, opts) => {
+      seenResumeCursor = opts?.resumeCursor;
+      const p: CapturePage = { status: 200, engine: 'direct', cursor: opts?.resumeCursor ?? '', body: page(['7300000000000000013'], { hasMore: 0, cursor: '0' }) };
+      opts?.onPage?.(p);
+      return { pages: [p], diagnostic: { reason: 'completed', engine: 'direct', hasMore: false, nextCursor: null } };
+    },
+    async () => {},
+    undefined,
+    undefined,
+    'resume',
+    'likes',
+    {
+      resumeCursor: { likes: checkpoints[0].resumeCursor },
+      previousCheckpoint: { likes: checkpoints[0] },
+      onCheckpoint: (cp) => { checkpoints.push(cp); },
+    },
+  );
+  assert.equal(seenResumeCursor, '1700000000012');
+  assert.equal(checkpoints[2].resumeCursor, null);
+  assert.equal(checkpoints[2].receivedCount, 13);
+  assert.equal(checkpoints[2].diagnostic.reason, 'completed');
 });
