@@ -1,7 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, StyleSheet, View } from 'react-native';
 import { parseDanmakuList, type DanmakuItem } from '../douyin-bridge';
+import { mediaHeaders } from '../douyin';
+import { loadEmojiMap } from '../douyin-emoji';
 import { useDouyinSession } from './douyin-session';
+
+const EMOJI_SPLIT = /(\[[^\]\n]{1,8}\])/g;
+// Swap Douyin's inline "[微笑]" tokens for the native emoji images in danmaku
+// text; before the catalogue loads it falls back to the raw text.
+function danmakuText(text: string, map: Record<string, string>) {
+  if (!Object.keys(map).length) return text;
+  return text.split(EMOJI_SPLIT).map((part, index) => {
+    const uri = map[part];
+    if (uri) return <Image key={index} source={{ uri, headers: mediaHeaders }} style={{ width: 16, height: 16 }} />;
+    return part;
+  });
+}
 
 // A danmaku item that is currently flying across the screen.
 type Flying = { key: string; text: string; top: number; x: Animated.Value; started: boolean };
@@ -17,6 +31,8 @@ export function DanmakuOverlay({ workId, seconds, durationMs, playing, width, he
   const { request } = useDouyinSession();
   const [items, setItems] = useState<DanmakuItem[]>([]);
   const [flying, setFlying] = useState<Flying[]>([]);
+  const [emoji, setEmoji] = useState<Record<string, string>>({});
+  useEffect(() => { let alive = true; void loadEmojiMap().then(value => { if (alive) setEmoji(value); }); return () => { alive = false; }; }, []);
   const fired = useRef<Set<string>>(new Set());
   const lane = useRef(0);
   const secondsRef = useRef(seconds); secondsRef.current = seconds;
@@ -80,7 +96,7 @@ export function DanmakuOverlay({ workId, seconds, durationMs, playing, width, he
   }, [flying, width]);
 
   return <View pointerEvents="none" style={[styles.layer, { top, height: Math.max(0, height) }]}>
-    {flying.map(item => <Animated.Text key={item.key} numberOfLines={1} style={[styles.text, { top: item.top, transform: [{ translateX: item.x }] }]}>{item.text}</Animated.Text>)}
+    {flying.map(item => <Animated.Text key={item.key} numberOfLines={1} style={[styles.text, { top: item.top, transform: [{ translateX: item.x }] }]}>{danmakuText(item.text, emoji)}</Animated.Text>)}
   </View>;
 }
 
