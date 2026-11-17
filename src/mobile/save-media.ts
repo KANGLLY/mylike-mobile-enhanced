@@ -21,6 +21,15 @@ async function download(url: string, fallbackExt: string): Promise<string> {
   return result.uri;
 }
 
+// Save a single comment image / sticker (大表情包) to the phone's album.
+export async function saveImageUrl(url: string): Promise<string> {
+  const permission = await MediaLibrary.requestPermissionsAsync();
+  if (!permission.granted) throw new Error('需要相册权限才能保存，请到系统设置里允许后重试。');
+  const uri = await download(url, 'jpg');
+  await MediaLibrary.saveToLibraryAsync(uri);
+  return '已保存到手机相册。';
+}
+
 function labelOf(kind: SaveKind): string {
   return kind === 'video' ? '视频' : kind === 'images' ? '图片' : '音频';
 }

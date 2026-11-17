@@ -1,6 +1,6 @@
 import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, createContext } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { GestureDetector, GestureStateManager, useNativeGesture, usePanGesture, useSimultaneousGestures } from 'react-native-gesture-handler';
 import Animated, { cancelAnimation, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import { loadEmojiMap } from './douyin-emoji';
 import { parseCommentList, type FullComment } from './douyin-bridge';
 import { cachedGuestComments, fetchGuestCommentPreview, type GuestComment, type GuestCommentPreview } from './guest-comments';
 import { useDouyinSession } from './mobile/douyin-session';
+import { saveImageUrl } from './mobile/save-media';
 import { useMobile } from './mobile/context';
 
 function formatLikes(value: number): string {
@@ -90,6 +91,12 @@ function makeStyles(c: typeof darkColors) {
     actions: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingTop: 2 }, likeCol: { alignItems: 'center', minWidth: 26 }, likeCount: { color: c.likeCount, fontSize: 10.5, marginTop: 1 }, dislike: {},
     likes: { color: c.likes, fontSize: 11, paddingTop: 2, maxWidth: 58 },
     attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, attachment: { width: 84, height: 84, borderRadius: 6, backgroundColor: c.attachBg },
+    previewRoot: { flex: 1, backgroundColor: '#000', justifyContent: 'center' },
+    previewImage: { width: '100%', height: '72%' },
+    previewBar: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', justifyContent: 'space-around', paddingTop: 14, backgroundColor: '#000000aa' },
+    previewBtn: { paddingVertical: 10, paddingHorizontal: 18 },
+    previewBtnText: { color: '#ffffff', fontSize: 15 },
+    previewSaveText: { color: '#3ddc84', fontSize: 15, fontWeight: '600' },
     footer: { color: c.footer, textAlign: 'center', fontSize: 12, padding: 12 }, retry: { color: c.retry, fontSize: 12 },
   });
 }
@@ -115,8 +122,8 @@ const GuestCommentRow = memo(function GuestCommentRow({ item }: { item: GuestCom
   </View>;
 });
 
-const FullCommentRow = memo(function FullCommentRow({ item, depth, repliesOpen, onToggleReplies, loadingReplies }: {
-  item: FullComment; depth: number; repliesOpen?: boolean; onToggleReplies?: () => void; loadingReplies?: boolean;
+const FullCommentRow = memo(function FullCommentRow({ item, depth, repliesOpen, onToggleReplies, loadingReplies, onPreview }: {
+  item: FullComment; depth: number; repliesOpen?: boolean; onToggleReplies?: () => void; loadingReplies?: boolean; onPreview?: (url: string) => void;
 }) {
   const { styles, C } = useCommentTheme();
   const [failed, setFailed] = useState(false); const [expanded, setExpanded] = useState(false);
@@ -128,7 +135,7 @@ const FullCommentRow = memo(function FullCommentRow({ item, depth, repliesOpen, 
       <Text style={[styles.name, depth > 0 && styles.replyName]}>{item.nickname}</Text>
       <RichText text={item.text} style={[styles.text, depth > 0 && styles.replyText]} numberOfLines={expanded ? undefined : 6} selectable />
       {item.text.length > 160 && <Pressable accessibilityRole="button" onPress={() => setExpanded(value => !value)} hitSlop={5}><Text style={styles.reply}>{expanded ? '收起' : '展开'}</Text></Pressable>}
-      {item.attachments.length > 0 && <View style={styles.attachments}>{item.attachments.map(attachment => <Image key={attachment.url} source={{ uri: attachment.url, headers: mediaHeaders }} style={styles.attachment} resizeMode="cover" />)}</View>}
+      {item.attachments.length > 0 && <View style={styles.attachments}>{item.attachments.map(attachment => <Pressable key={attachment.url} accessibilityRole="imagebutton" accessibilityLabel="放大查看图片评论或表情包" onPress={() => onPreview?.(attachment.url)}><Image source={{ uri: attachment.url, headers: mediaHeaders }} style={styles.attachment} resizeMode="cover" /></Pressable>)}</View>}
       <View style={styles.metaRow}>
         {!!meta && <Text style={styles.meta}>{meta}</Text>}
         {depth === 0 && <Text style={styles.metaDot}>·</Text>}
@@ -172,6 +179,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const seed = sheetCache && sheetCache.workId === workId ? sheetCache : null;
   const [fullComments, setFullComments] = useState<FullComment[]>(seed?.fullComments ?? []); const [fullCursor, setFullCursor] = useState<string | null>(seed?.fullCursor ?? null);
   const [fullHasMore, setFullHasMore] = useState(seed?.fullHasMore ?? false); const [fullLoading, setFullLoading] = useState(false); const [fullLoadingMore, setFullLoadingMore] = useState(false); const [fullError, setFullError] = useState('');
+  const [preview, setPreview] = useState<string | null>(null); const [savingPreview, setSavingPreview] = useState(false);
   const [repliesOpen, setRepliesOpen] = useState<Record<string, boolean>>(seed?.repliesOpen ?? {});
   const [replyState, setReplyState] = useState<Record<string, ReplyState>>(seed?.replyState ?? {});
   const offset = useSharedValue(height); const closing = useSharedValue(false); const previousClose = useRef(closeRequest);
@@ -309,8 +317,16 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
   const retry = () => { if (!refreshing) setAttempt(value => value + 1); };
   const retryFull = () => { if (!fullLoading) void loadFull(fullComments.length ? (fullCursor ?? '0') : '0', false); };
+  const savePreview = useCallback(async () => {
+    if (!preview || savingPreview) return;
+    setSavingPreview(true);
+    try { await saveImageUrl(preview); Alert.alert('已保存', '表情包已保存到手机相册。'); }
+    catch (failure) { Alert.alert('保存失败', failure instanceof Error ? failure.message : '请稍后重试。'); }
+    finally { setSavingPreview(false); }
+  }, [preview, savingPreview]);
   useEffect(() => { sheetCache = { workId, fullComments, fullCursor, fullHasMore, repliesOpen, replyState }; }, [workId, fullComments, fullCursor, fullHasMore, repliesOpen, replyState]);
-  return <ThemeCtx.Provider value={theme}><Animated.View accessibilityViewIsModal style={[styles.sheet, { height }, style]}>
+  return <ThemeCtx.Provider value={theme}><>
+    <Animated.View accessibilityViewIsModal style={[styles.sheet, { height }, style]}>
     <GestureDetector gesture={pan}><View style={styles.header}><View style={styles.grip} /><Text style={styles.title}>{loggedIn ? `评论 · ${fullComments.length} 条` : `评论预览${current ? ` · ${current.items.length} 条` : ''}`}</Text><Pressable accessibilityLabel="关闭评论" onPress={close} hitSlop={15} style={styles.close}><Text style={styles.closeText}>×</Text></Pressable></View></GestureDetector>
     {loggedIn
       ? <View style={styles.noticeFull}><Text style={styles.noticeFullText}>已登录 · 完整评论，支持翻页和楼中楼回复</Text>{fullLoading && <ActivityIndicator size="small" color={C.green} />}</View>
@@ -329,9 +345,9 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
           renderItem={({ item }) => {
             if (item.type === 'comment') {
               const state = replyState[item.item.id];
-              return <FullCommentRow item={item.item} depth={0} repliesOpen={!!repliesOpen[item.item.id]} loadingReplies={!!state?.loading} onToggleReplies={item.item.replyCount > 0 ? () => toggleReplies(item.item) : undefined} />;
+              return <FullCommentRow item={item.item} depth={0} repliesOpen={!!repliesOpen[item.item.id]} loadingReplies={!!state?.loading} onToggleReplies={item.item.replyCount > 0 ? () => toggleReplies(item.item) : undefined} onPreview={setPreview} />;
             }
-            if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} />;
+            if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} onPreview={setPreview} />;
             if (item.type === 'replyFooter') return <View style={styles.replyFooter}>
               {item.hasMore ? <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true, 10)} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>{item.loading ? '正在读取更多…' : '展开更多'}</Text><Ionicons name="chevron-down" size={13} color={C.icon} /></Pressable> : null}
               <Pressable accessibilityRole="button" onPress={() => setRepliesOpen(previous => ({ ...previous, [item.comment.id]: false }))} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>收起</Text><Ionicons name="chevron-up" size={13} color={C.icon} /></Pressable>
@@ -349,5 +365,16 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
           ListFooterComponent={current.items.length ? <Text style={styles.footer}>仅展示游客可读取的预览，登录后可看全部评论。</Text> : undefined}
           renderItem={({ item }) => <GuestCommentRow item={item} />} /></GestureDetector>}
       </>}
-  </Animated.View></ThemeCtx.Provider>;
+  </Animated.View>
+    <Modal transparent visible={preview !== null} animationType="fade" onRequestClose={() => setPreview(null)}>
+      <View style={styles.previewRoot}>
+        <Pressable accessibilityLabel="关闭预览" style={StyleSheet.absoluteFill} onPress={() => setPreview(null)} />
+        {preview ? <Image source={{ uri: preview, headers: mediaHeaders }} style={styles.previewImage} resizeMode="contain" /> : null}
+        <View style={[styles.previewBar, { paddingBottom: Math.max(16, insets.bottom) }]}>
+          <Pressable accessibilityRole="button" onPress={() => setPreview(null)} style={styles.previewBtn}><Text style={styles.previewBtnText}>关闭</Text></Pressable>
+          <Pressable accessibilityRole="button" disabled={savingPreview} onPress={() => void savePreview()} style={styles.previewBtn}><Text style={styles.previewSaveText}>{savingPreview ? '保存中…' : '保存到相册'}</Text></Pressable>
+        </View>
+      </View>
+    </Modal>
+  </></ThemeCtx.Provider>;
 }
