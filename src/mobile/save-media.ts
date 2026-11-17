@@ -1,5 +1,7 @@
+import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library/legacy';
+import * as Sharing from 'expo-sharing';
 import { mediaHeaders, type MediaResult } from '../douyin';
 
 export type SaveKind = 'video' | 'images' | 'audio';
@@ -72,11 +74,14 @@ function labelOf(kind: SaveKind): string {
 
 // Download the requested media of the current work and store it on the phone.
 // Video works save the first video candidate; gallery works save every picture;
-// audio saves the background music track. Everything goes through the system
-// media library so it lands in the phone's album / files.
+// audio saves the background music track (via the system share sheet on iOS,
+// since Photos does not accept standalone audio files).
 export async function saveWorkMedia(data: MediaResult, kind: SaveKind): Promise<string> {
-  const permission = await MediaLibrary.requestPermissionsAsync();
-  if (!permission.granted) throw new Error('需要相册权限才能保存，请到系统设置里允许后重试。');
+  const shareAudioOnIos = Platform.OS === 'ios' && kind === 'audio';
+  if (!shareAudioOnIos) {
+    const permission = await MediaLibrary.requestPermissionsAsync();
+    if (!permission.granted) throw new Error('需要相册权限才能保存，请到系统设置里允许后重试。');
+  }
 
   let urls: string[] = [];
   let allowed = VIDEO_EXT;
@@ -101,7 +106,12 @@ export async function saveWorkMedia(data: MediaResult, kind: SaveKind): Promise<
   for (const url of urls) {
     try {
       const uri = await download(url, allowed, fallback);
-      await MediaLibrary.saveToLibraryAsync(uri);
+      if (shareAudioOnIos) {
+        if (!(await Sharing.isAvailableAsync())) throw new Error('当前设备不支持分享保存文件。');
+        await Sharing.shareAsync(uri, { dialogTitle: '保存音频（可存储到“文件”）' });
+      } else {
+        await MediaLibrary.saveToLibraryAsync(uri);
+      }
       saved += 1;
     } catch (failure) {
       lastError = failure;
@@ -109,5 +119,6 @@ export async function saveWorkMedia(data: MediaResult, kind: SaveKind): Promise<
     }
   }
   if (!saved) throw lastError instanceof Error ? lastError : new Error('保存失败，请稍后重试。');
+  if (shareAudioOnIos) return '已打开系统分享面板；选择「存储到“文件”」即可在苹果「文件」App 中播放。';
   return `已保存 ${saved} 个${labelOf(kind)}到手机。`;
 }
