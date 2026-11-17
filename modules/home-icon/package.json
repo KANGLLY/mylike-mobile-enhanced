@@ -1,0 +1,7 @@
+{
+  "name": "home-icon",
+  "version": "1.0.0",
+  "description": "Pin a custom home-screen shortcut icon from a user-picked image",
+  "main": "index.js",
+  "private": true
+}

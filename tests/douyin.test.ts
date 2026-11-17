@@ -25,7 +25,7 @@ test('rejects an invalid work ID before making a request', async (context) => {
 });
 
 test('preserves the exact numeric ID and signed HTTPS address', () => {
-  deepEqual(parseMediaDetail(detailBody, SAMPLE_ID), { id: SAMPLE_ID, title: '测试', candidates: [mediaUrl] });
+  deepEqual(parseMediaDetail(detailBody, SAMPLE_ID), { id: SAMPLE_ID, title: '测试', candidates: [mediaUrl], musicCandidates: [] });
   const otherId = String(BigInt(SAMPLE_ID) + 1n);
   throws(() => parseMediaDetail(detailBody.replace(SAMPLE_ID, otherId), SAMPLE_ID), /不同的作品 ID/);
 });
@@ -88,5 +88,5 @@ test('the guest detail request does not send credentials', async (context) => {
   equal(new URL(url).searchParams.get('aweme_id'), SAMPLE_ID);
   equal(options.credentials, 'omit');
   equal(new Headers(options.headers).has('cookie'), false);
-  deepEqual(video, { id: SAMPLE_ID, title: '测试', candidates: [mediaUrl] });
+  deepEqual(video, { id: SAMPLE_ID, title: '测试', candidates: [mediaUrl], musicCandidates: [] });
 });

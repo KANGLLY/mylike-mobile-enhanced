@@ -36,7 +36,20 @@ test('date filtering binds Beijing month bounds and treats search as literal tex
 test('cancelled short drags and opposite flicks do not advance; malformed preferences recover', () => {
   equal(swipeStep(0, 0, 0), 0);
   equal(swipeStep(20, 1200, 800), 0); equal(swipeStep(-50, 900, 800), 0); equal(swipeStep(-50, -900, 800), 1); equal(swipeStep(300, 0, 800), -1);
-  deepEqual(parsePreferences('{"rate":100,"auto":true,"clear":false}'), { rate: 1, auto: true, clear: false });
+  deepEqual(parsePreferences('{"rate":100,"auto":true,"clear":false}'), {
+    rate: 1, auto: true, clear: false,
+    danmaku: false, danmakuOpacity: 80, danmakuFontSize: 16, danmakuSpeed: 1, danmakuLines: 6,
+    commentTheme: 'dark', bottomOffset: 0, meBottomOffset: 0,
+    seekOffset: 0, captionOffset: 0, toolbarOffset: 0,
+    detailSeekOffset: 28, detailCaptionOffset: 28, detailToolbarOffset: 28,
+  });
+  deepEqual(parsePreferences('{"seekOffset":-99,"detailSeekOffset":999,"detailCaptionOffset":42,"toolbarOffset":18}'), {
+    rate: 1, auto: false, clear: false,
+    danmaku: false, danmakuOpacity: 80, danmakuFontSize: 16, danmakuSpeed: 1, danmakuLines: 6,
+    commentTheme: 'dark', bottomOffset: 0, meBottomOffset: 0,
+    seekOffset: -20, captionOffset: 0, toolbarOffset: 18,
+    detailSeekOffset: 120, detailCaptionOffset: 42, detailToolbarOffset: 28,
+  });
 });
 
 test('the native queue query reads all 10000 works, deduplicates sources, and honors local overrides', () => {

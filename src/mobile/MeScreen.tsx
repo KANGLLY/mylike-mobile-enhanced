@@ -95,7 +95,7 @@ export function MeScreen({ visible, onOpen, onImport, onSearch, onMore }: { visi
   </View>;
 }
 const styles = StyleSheet.create({
-  topbar: { height: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 8 },
+  topbar: { height: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 10 },
   topAction: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: c.soft, borderWidth: 1, borderColor: c.line }, pressed: { opacity: 0.6 },
   viewport: { flex: 1, overflow: 'hidden' }, header: { position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5, backgroundColor: c.background },
   tabs: { height: TAB_HEIGHT, flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: c.line },

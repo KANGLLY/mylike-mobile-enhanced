@@ -18,6 +18,7 @@ type VideoResult = Presentation & {
   id: string;
   title: string;
   candidates: string[];
+  musicCandidates: string[];
   author?: string;
   size?: { width: number; height: number };
 };
@@ -133,7 +134,12 @@ export function parseMediaDetail(body: string, id: string): MediaResult {
   const candidates = mediaUrls(object(video?.play_addr_h264)?.url_list, object(video?.play_addr)?.url_list);
   if (!candidates.length) throw new DouyinError('已取到详情，但没有可用的 HTTPS 视频地址。');
   const size = videoSize(video) ?? videoSize(object(video?.play_addr_h264)) ?? videoSize(object(video?.play_addr));
-  return { ...common, candidates, ...(size && { size }) };
+  const music = object(detail.music);
+  const matchedSound = object(music?.matched_pgc_sound);
+  const musicCandidates = mediaUrls(
+    object(music?.play_url)?.url_list, music?.url_list, object(matchedSound?.play_url)?.url_list,
+  );
+  return { ...common, candidates, musicCandidates, ...(size && { size }) };
 }
 
 export async function resolveMedia(id: string, signal?: AbortSignal): Promise<MediaResult> {

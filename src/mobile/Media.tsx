@@ -95,7 +95,7 @@ function Video({ id, uri, current, active, prime, prepare, paused, boosted, seek
   onFrame: () => void; onReady: (id: string) => void; onEnd: () => boolean; onPause: () => void; onFailure: () => void;
 }) {
   const source = useMemo(() => ({ uri, headers: mediaHeaders }), [uri]);
-  const player = useVideoPlayer(source, value => { value.staysActiveInBackground = false; value.muted = true; value.timeUpdateEventInterval = 0.5; value.bufferOptions = { preferredForwardBufferDuration: 3, waitsToMinimizeStalling: false, minBufferForPlayback: 0.25 }; });
+  const player = useVideoPlayer(source, value => { value.staysActiveInBackground = false; value.muted = true; value.preservesPitch = true; value.timeUpdateEventInterval = 0.5; value.bufferOptions = { preferredForwardBufferDuration: 3, waitsToMinimizeStalling: false, minBufferForPlayback: 0.25 }; });
   const intent = useMemo(() => createPlaybackIntent(player, handoff), [player, handoff]);
   const prewarm = useMemo(() => createFramePrewarm(intent, player), [intent, player]);
   const probe = useMemo(() => __DEV__ ? createFrameProbe(() => performance.now(), value => console.info('[MyLike first frame]', value)) : null, []);

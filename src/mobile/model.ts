@@ -6,8 +6,23 @@ export type Scope = { source: Source; search?: string; filter?: LibraryFilter; p
 export type Work = LibraryWork & { liked: boolean; saved: boolean };
 export type Point = { kind: 'video' | 'gallery'; value: number };
 export type Session = { ids: string[]; index: number; mode: 'ordered' | 'shuffle'; point: Point | null };
-export type Preferences = { auto: boolean; rate: number; clear: boolean };
-export const defaultPreferences: Preferences = { auto: false, rate: 1, clear: false };
+export type CommentTheme = 'dark' | 'light';
+export type Preferences = {
+  auto: boolean; rate: number; clear: boolean;
+  danmaku: boolean; danmakuOpacity: number; danmakuFontSize: number; danmakuSpeed: number; danmakuLines: number;
+  commentTheme: CommentTheme;
+  bottomOffset: number; meBottomOffset: number;
+  seekOffset: number; captionOffset: number; toolbarOffset: number;
+  detailSeekOffset: number; detailCaptionOffset: number; detailToolbarOffset: number;
+};
+export const defaultPreferences: Preferences = {
+  auto: false, rate: 1, clear: false,
+  danmaku: false, danmakuOpacity: 80, danmakuFontSize: 16, danmakuSpeed: 1, danmakuLines: 6,
+  commentTheme: 'dark',
+  bottomOffset: 0, meBottomOffset: 0,
+  seekOffset: 0, captionOffset: 0, toolbarOffset: 0,
+  detailSeekOffset: 28, detailCaptionOffset: 28, detailToolbarOffset: 28,
+};
 export const rates = [0.75, 1, 1.25, 1.5, 2];
 export const mobileSchema = `
   CREATE TABLE IF NOT EXISTS mobile_marks (
@@ -81,7 +96,30 @@ export function restoreSession(value: string | null, pool: readonly string[], mo
   return { ids: mode === 'shuffle' ? shuffled(pool) : [...new Set(pool)], index: 0, mode, point: null };
 }
 export function parsePreferences(value: string | null): Preferences {
-  try { const p = JSON.parse(value ?? '{}'); return { auto: p.auto === true, clear: p.clear === true, rate: rates.includes(p.rate) ? p.rate : 1 }; }
+  try {
+    const p = JSON.parse(value ?? '{}');
+    const num = (raw: unknown, min: number, max: number, fallback: number) => {
+      const n = typeof raw === 'number' && Number.isFinite(raw) ? raw : fallback;
+      return Math.min(max, Math.max(min, n));
+    };
+    return {
+      auto: p.auto === true, clear: p.clear === true, danmaku: p.danmaku === true,
+      danmakuOpacity: Math.round(num(p.danmakuOpacity, 20, 100, 80)),
+      danmakuFontSize: Math.round(num(p.danmakuFontSize, 12, 22, 16)),
+      danmakuSpeed: Math.round(num(p.danmakuSpeed, 0.5, 2, 1) * 10) / 10,
+      danmakuLines: Math.round(num(p.danmakuLines, 1, 10, 6)),
+      commentTheme: p.commentTheme === 'light' ? 'light' : 'dark',
+      bottomOffset: Math.round(num(p.bottomOffset, 0, 120, 0)),
+      meBottomOffset: Math.round(num(p.meBottomOffset, 0, 120, 0)),
+      rate: rates.includes(p.rate) ? p.rate : 1,
+      seekOffset: Math.round(num(p.seekOffset, -20, 120, 0)),
+      captionOffset: Math.round(num(p.captionOffset, -20, 120, 0)),
+      toolbarOffset: Math.round(num(p.toolbarOffset, -20, 120, 0)),
+      detailSeekOffset: Math.round(num(p.detailSeekOffset, -20, 120, 28)),
+      detailCaptionOffset: Math.round(num(p.detailCaptionOffset, -20, 120, 28)),
+      detailToolbarOffset: Math.round(num(p.detailToolbarOffset, -20, 120, 28)),
+    };
+  }
   catch { return { ...defaultPreferences }; }
 }
 export function swipeStep(distance: number, velocity: number, extent: number): -1 | 0 | 1 {
