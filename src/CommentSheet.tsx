@@ -167,6 +167,9 @@ type SheetCache = { workId: string; fullComments: FullComment[]; fullCursor: str
 // One-slot cache so closing and reopening the sheet on the same video keeps the
 // loaded comments/replies instead of re-fetching; switching video drops it.
 let sheetCache: SheetCache | null = null;
+// Remember each video's comment scroll offset so closing and reopening the sheet
+// returns to where the user was, instead of jumping back to the first comment.
+const scrollPositions: Record<string, number> = {};
 
 export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
   const insets = useSafeAreaInsets();
@@ -185,6 +188,14 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const offset = useSharedValue(height); const closing = useSharedValue(false); const previousClose = useRef(closeRequest);
   const scrollY = useSharedValue(0); const start = useSharedValue({ x: 0, y: 0 }); const [dragging, setDragging] = useState(false);
   const current = result?.workId === workId ? result : null;
+  const listRef = useRef<any>(null); const scrollRestored = useRef(false); const restoredShared = useSharedValue(false);
+  const saveScroll = useCallback((id: string, y: number) => { scrollPositions[id] = y; }, []);
+  const onContentSize = useCallback(() => {
+    if (scrollRestored.current) return;
+    scrollRestored.current = true; restoredShared.value = true;
+    const y = scrollPositions[workId] ?? 0;
+    if (y > 0) listRef.current?.scrollToOffset({ offset: y, animated: false });
+  }, [workId, restoredShared]);
 
   // Detect an already-signed-in session the first time the sheet opens, so a
   // returning user does not have to open the login page and press "完成" again.
@@ -313,7 +324,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     onFinalize: () => { 'worklet'; scheduleOnRN(setDragging, false); },
   });
   const native = useNativeGesture(); const listGesture = useSimultaneousGestures(listPan, native);
-  const scroll = useAnimatedScrollHandler({ onScroll: event => { scrollY.value = Math.max(0, event.contentOffset.y); } });
+  const scroll = useAnimatedScrollHandler({ onScroll: event => { scrollY.value = Math.max(0, event.contentOffset.y); if (restoredShared.value) scheduleOnRN(saveScroll, workId, event.contentOffset.y); } });
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
   const retry = () => { if (!refreshing) setAttempt(value => value + 1); };
   const retryFull = () => { if (!fullLoading) void loadFull(fullComments.length ? (fullCursor ?? '0') : '0', false); };
@@ -336,7 +347,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
       ? <>
         {fullLoading && !fullComments.length && <ActivityIndicator color={C.spinner} style={styles.loading} />}
         {!!fullError && <Pressable onPress={retryFull} style={styles.error}><Text style={styles.meta}>{fullError}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
-        {!fullLoading || fullComments.length > 0 ? <GestureDetector gesture={listGesture}><Animated.FlatList data={rows} keyExtractor={row => row.key} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
+        {!fullLoading || fullComments.length > 0 ? <GestureDetector gesture={listGesture}><Animated.FlatList ref={listRef} onContentSizeChange={onContentSize} data={rows} keyExtractor={row => row.key} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
           initialNumToRender={10} maxToRenderPerBatch={8} windowSize={5} scrollEnabled={!dragging} onScroll={scroll} scrollEventThrottle={16} bounces={false} overScrollMode="never"
           ListEmptyComponent={!fullLoading && !fullError ? <Text style={styles.meta}>还没有评论。</Text> : undefined}
           ListFooterComponent={fullHasMore
@@ -359,7 +370,7 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
       : <>
         {!current && refreshing && <ActivityIndicator color={C.spinner} style={styles.loading} />}
         {!!error && <Pressable onPress={retry} style={styles.error}><Text style={styles.meta}>{error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
-        {current && <GestureDetector gesture={listGesture}><Animated.FlatList data={current.items} keyExtractor={item => item.id} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
+        {current && <GestureDetector gesture={listGesture}><Animated.FlatList ref={listRef} onContentSizeChange={onContentSize} data={current.items} keyExtractor={item => item.id} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
           initialNumToRender={10} maxToRenderPerBatch={8} windowSize={5} scrollEnabled={!dragging} onScroll={scroll} scrollEventThrottle={16} bounces={false} overScrollMode="never"
           ListEmptyComponent={<Text style={styles.meta}>分享接口未提供预览，无法据此判断作品是否无评论。</Text>}
           ListFooterComponent={current.items.length ? <Text style={styles.footer}>仅展示游客可读取的预览，登录后可看全部评论。</Text> : undefined}
