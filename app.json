@@ -2,7 +2,7 @@
   "expo": {
     "name": "MyLike",
     "slug": "mylike-guest-player",
-    "version": "1.0.2",
+    "version": "1.0.4",
     "orientation": "default",
     "userInterfaceStyle": "light",
     "platforms": [
@@ -12,11 +12,11 @@
     "icon": "./assets/icons/ios/classic.png",
     "ios": {
       "bundleIdentifier": "com.mylike.replay",
-      "buildNumber": "3"
+      "buildNumber": "4"
     },
     "android": {
       "package": "com.mylike.replay",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icons/android/classic-fg.png",
         "backgroundColor": "#302028"

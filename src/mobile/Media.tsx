@@ -1,11 +1,11 @@
 import { useEvent, useEventListener } from 'expo';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ActivityIndicator, AppState, Image, StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 import { GalleryMusic } from '../GalleryMusic';
 import { LiveClip } from '../LiveClip';
-import { mediaHeaders, type MediaResult } from '../douyin';
+import { mediaHeaders, type ArticleData, type MediaResult } from '../douyin';
 import { forgetMedia, loadMedia, peekMedia } from './media-cache';
 import type { Point, Work } from './model';
 import { useMobile } from './context';
@@ -23,9 +23,10 @@ export function Poster({ work, fit = 'contain' }: { work: Pick<Work, 'title' | '
       <View style={styles.placeholder}><Text style={styles.watermark}>{work?.kind === 'video' ? '▶' : '▧'}</Text><Text style={styles.posterTitle} numberOfLines={2}>{work?.title || 'MyLike'}</Text></View>}
   </View>;
 }
-export const MediaSlot = memo(function MediaSlot({ id, current, active, warm, prepare, retained, preserve, paused, boosted, seeking, auto, rate, point, photo, photoX, width, height, allowZoom, revision, control, handoff, onInfo, onTime, onReady, onEnd, onPause }: {
+export const MediaSlot = memo(function MediaSlot({ id, current, active, warm, prepare, retained, preserve, paused, boosted, seeking, auto, rate, point, photo, photoX, width, height, allowZoom, revision, control, handoff, renderArticle, onInfo, onTime, onReady, onEnd, onPause }: {
   id: string; current: boolean; active: boolean; warm: boolean; prepare: boolean; retained: boolean; preserve: boolean; paused: boolean; boosted: boolean; seeking: boolean; auto: boolean; rate: number;
   point: Point | null; photo: number; photoX: SharedValue<number>; width: number; height: number; allowZoom: boolean; revision: number; control: RefObject<MediaControl | null>; handoff: PlaybackHandoff;
+  renderArticle?: (article: ArticleData, coverUri: string | undefined, ready: () => void, active: boolean, paused: boolean) => ReactNode;
   onInfo: (info: MediaInfo) => void; onTime: (id: string, seconds: number, duration: number, force: boolean) => void;
   onReady: (id: string) => void; onEnd: () => boolean; onPause: () => void;
 }) {
@@ -85,8 +86,10 @@ export const MediaSlot = memo(function MediaSlot({ id, current, active, warm, pr
     {uri && keepVideo && <Video key={uri} id={id} uri={uri} current={current} active={active} prime={warm && !current} prepare={prepare} paused={paused} boosted={boosted} seeking={seeking} rate={rate} auto={auto}
       width={width} height={height} sourceSize={size} allowZoom={allowZoom} position={lastTime} control={localControl} handoff={handoff} onFrame={revealFrame} onDuration={setVideoDuration} onTime={onTime} onReady={onReady} onEnd={onEnd} onPause={onPause} onFailure={() => { if (!currentRole.current) preloadFailed.current = true; setCandidate(n => n === candidate ? n + 1 : n); }} />}
     {!album && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { opacity: keepVideo && visibleFrame === frameToken ? 0 : 1 }]}><Poster work={work} fit={videoFit(width, height, size, allowZoom)} /></View>}
-    {album && <Gallery id={id} images={album.images} photo={photo} width={width} x={photoX} current={current} active={active} retained={retained}
-      paused={paused} boosted={boosted} rate={rate} stopClip={stopClip} onReady={onReady} onUnavailable={clipFailed} onPhase={setLivePhase} />}
+    {album && (album.article && renderArticle
+      ? renderArticle(album.article, album.images[photo]?.candidates[0] ?? album.article.headerImages[0], () => { if (current) onReady(id); }, active, paused)
+      : <Gallery id={id} images={album.images} backgroundColor={undefined} photo={photo} width={width} x={photoX} current={current} active={active} retained={retained}
+          paused={paused} boosted={boosted} rate={rate} stopClip={stopClip} onReady={onReady} onUnavailable={clipFailed} onPhase={setLivePhase} />)}
     {album && current && needed && album.musicCandidates.length > 0 && <GalleryMusic key={id} candidates={album.musicCandidates} enabled={active && !paused} stopMusic={stopMusic} onUnavailable={musicFailed} />}
     {waiting && current && active && <ActivityIndicator color="#fff" style={styles.wait} />}
   </View>;
@@ -269,18 +272,22 @@ function PhotoSlot({ index, x, width, current, children }: { index: number; x: S
   const style = useAnimatedStyle(() => ({ transform: [{ translateX: current ? pageTranslation(x.value, index, width) : 0 }] }));
   return <Animated.View style={[StyleSheet.absoluteFill, styles.surface, style]}>{children}</Animated.View>;
 }
-function Gallery({ id, images, photo, width, x, current, active, retained, paused, boosted, rate, stopClip, onReady, onUnavailable, onPhase }: {
-  id: string; images: Extract<MediaResult, { images: unknown }>['images']; photo: number; width: number; x: SharedValue<number>;
+function Gallery({ id, images, backgroundColor, photo, width, x, current, active, retained, paused, boosted, rate, stopClip, onReady, onUnavailable, onPhase }: {
+  id: string; images: Extract<MediaResult, { images: unknown }>['images']; backgroundColor?: string; photo: number; width: number; x: SharedValue<number>;
   current: boolean; active: boolean; retained: boolean; paused: boolean; boosted: boolean; rate: number; stopClip: RefObject<(() => void) | null>;
   onReady: (id: string) => void; onUnavailable: () => void;
   onPhase: (phase: 'loading' | 'ready' | 'failed') => void;
 }) {
+  useEffect(() => { if (current && images.length === 0) onReady(id); }, [current, images.length, id, onReady]);
   // Keep the previous picture in the prepared album until it becomes current.
   const lastPhoto = useRef(0);
-  if (current) lastPhoto.current = Math.max(0, Math.min(images.length - 1, photo));
+  if (current) lastPhoto.current = images.length ? Math.max(0, Math.min(images.length - 1, photo)) : 0;
+  if (images.length === 0) {
+    return <View style={[StyleSheet.absoluteFill, styles.surface, backgroundColor ? { backgroundColor } : null]} />;
+  }
   const selected = lastPhoto.current;
   const slots = current ? neighborPages(selected, images.length) : [selected];
-  return <View style={[StyleSheet.absoluteFill, styles.surface]}>
+  return <View style={[StyleSheet.absoluteFill, styles.surface, backgroundColor ? { backgroundColor } : null]}>
     {slots.map(index => <PhotoSlot key={index} index={index} x={x} width={width} current={current}>
       <Picture candidates={images[index].candidates} onLoad={current && index === selected ? () => onReady(id) : undefined} />
       {current && index === selected && (active || retained) && images[index].liveCandidates.length > 0 && <LiveClip key={`${id}:${index}`} candidates={images[index].liveCandidates}

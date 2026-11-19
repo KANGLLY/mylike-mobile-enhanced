@@ -2,6 +2,7 @@ import { deepEqual, equal } from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { mobileSchema, parsePreferences, parseSession, queueQuery, restoreSession, shuffled, swipeStep, whereScope, workSelect } from '../src/mobile/model.ts';
+import { compactRangeSelection, expandRangeSelection, formatRangeSummary, recentMonthTokens } from '../src/mobile/range-helpers.ts';
 
 test('local overrides survive reimport, remain independent, and do not remove all works', () => {
   const db = new DatabaseSync(':memory:');
@@ -42,14 +43,45 @@ test('cancelled short drags and opposite flicks do not advance; malformed prefer
     commentTheme: 'dark', bottomOffset: 0, meBottomOffset: 0,
     seekOffset: 0, captionOffset: 0, toolbarOffset: 0,
     detailSeekOffset: 28, detailCaptionOffset: 28, detailToolbarOffset: 28,
+    homeRanges: {},
   });
-  deepEqual(parsePreferences('{"seekOffset":-99,"detailSeekOffset":999,"detailCaptionOffset":42,"toolbarOffset":18}'), {
+  deepEqual(parsePreferences('{"seekOffset":-99,"detailSeekOffset":999,"detailCaptionOffset":42,"toolbarOffset":18,"homeRanges":{"all":["2025","2024-02","bad","unknown"],"likes":["2026-13"]}}'), {
     rate: 1, auto: false, clear: false,
     danmaku: false, danmakuOpacity: 80, danmakuFontSize: 16, danmakuSpeed: 1, danmakuLines: 6,
     commentTheme: 'dark', bottomOffset: 0, meBottomOffset: 0,
     seekOffset: -20, captionOffset: 0, toolbarOffset: 18,
     detailSeekOffset: 120, detailCaptionOffset: 42, detailToolbarOffset: 28,
+    homeRanges: { all: ['2025', '2024-02', 'unknown'] },
   });
+});
+
+test('multi-year/month home range filtering and compact selection helpers', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(`CREATE TABLE library_works(id TEXT PRIMARY KEY,title TEXT,author TEXT,published_at INTEGER,kind TEXT,cover_url TEXT,source_order INTEGER);
+      CREATE TABLE library_memberships(source TEXT,work_id TEXT,PRIMARY KEY(source,work_id));CREATE TABLE library_folder_works(folder_id TEXT,work_id TEXT);${mobileSchema}`);
+    const insert = db.prepare('INSERT INTO library_works VALUES(?,?,?,?,?,?,?)');
+    insert.run('1', 'w2023', 'a', Date.parse('2023-06-15T10:00:00Z'), 'video', null, null);
+    insert.run('2', 'w2024-02', 'a', Date.parse('2024-02-10T10:00:00Z'), 'video', null, null);
+    insert.run('3', 'w2024-05', 'a', Date.parse('2024-05-10T10:00:00Z'), 'video', null, null);
+    insert.run('4', 'w2025-11', 'a', Date.parse('2025-11-10T10:00:00Z'), 'video', null, null);
+    insert.run('5', 'w-unknown', 'a', null, 'video', null, null);
+
+    const q = queueQuery({ source: 'all', periods: ['2025', '2024-02', 'unknown'] });
+    const ids = db.prepare(q.sql).all(...q.values).map((r) => String(r.id)).sort();
+    deepEqual(ids, ['2', '4', '5']);
+  } finally {
+    db.close();
+  }
+
+  const available = { years: [{ year: 2025, months: [1, 2] }, { year: 2024, months: [12] }], unknown: true };
+  deepEqual([...expandRangeSelection(available, ['2025'])].sort(), ['2025-01', '2025-02']);
+  equal(compactRangeSelection(available, expandRangeSelection(available, undefined)), undefined);
+  deepEqual(compactRangeSelection(available, new Set(['2025-01', '2025-02', 'unknown'])), ['2025', 'unknown']);
+  deepEqual(recentMonthTokens(available, 2), ['2025-02', '2025-01']);
+  equal(formatRangeSummary(undefined), '全部日期');
+  equal(formatRangeSummary(['2025-11']), '2025.11');
+  equal(formatRangeSummary(['2025', '2024-12']), '已选 2 项');
 });
 
 test('the native queue query reads all 10000 works, deduplicates sources, and honors local overrides', () => {

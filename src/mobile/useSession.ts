@@ -17,6 +17,8 @@ export function useSession(key: string, scope: Scope, initial?: Session, title =
   const savedAt = useRef(0);
   const keyRef = useRef(key); keyRef.current = key;
   const scopeRef = useRef(scope); scopeRef.current = scope;
+  const scopeSignature = useMemo(() => JSON.stringify({ source: scope.source, periods: scope.periods ?? null }), [scope.source, scope.periods]);
+  const lastScope = useRef<{ key: string; signature: string } | null>(null);
   const initialRef = useRef(initial); initialRef.current = initial;
   const titleRef = useRef(title); titleRef.current = title;
   const watched = useRef(''); const token = useRef(''); const queueRecorded = useRef(false);
@@ -41,9 +43,25 @@ export function useSession(key: string, scope: Scope, initial?: Session, title =
   }, [enqueue, persistent]);
   useEffect(() => {
     const request = ++generation.current; let mounted = true;
+    const scopeChangedSameChannel = lastScope.current?.key === key && lastScope.current.signature !== scopeSignature;
+    lastScope.current = { key, signature: scopeSignature };
     setLoading(true); setError('');
-    const task = initialRef.current ? Promise.resolve(initialRef.current) : Promise.all([queueIds(scopeRef.current), readBookmark(key)])
-      .then(([pool, saved]) => restoreSession(saved, pool, scopeRef.current.source === 'all' && key.startsWith('home:') ? 'shuffle' : 'ordered'));
+    const task = initialRef.current && !scopeChangedSameChannel
+      ? Promise.resolve(initialRef.current)
+      : scopeChangedSameChannel
+        ? queueIds(scopeRef.current).then((pool) => {
+            const active = current.current;
+            const mode = key.startsWith('home:all') ? 'shuffle' : active?.mode ?? 'ordered';
+            const keepId = active?.ids[active.index];
+            const orderedIds = mode === 'shuffle' ? shuffled(pool, keepId) : [...new Set(pool)];
+            const idx = keepId ? orderedIds.indexOf(keepId) : -1;
+            if (mode !== 'shuffle' && idx >= 0) {
+              return { ids: orderedIds, index: idx, mode, point: active?.point ?? null } satisfies Session;
+            }
+            return { ids: orderedIds, index: 0, mode, point: null } satisfies Session;
+          })
+        : Promise.all([queueIds(scopeRef.current), readBookmark(key)])
+            .then(([pool, saved]) => restoreSession(saved, pool, scopeRef.current.source === 'all' && key.startsWith('home:') ? 'shuffle' : 'ordered'));
     void task.then(value => { if (mounted && request === generation.current) select(value); })
       .catch(() => { if (mounted) setError('无法建立播放队列。'); })
       .finally(() => { if (mounted) setLoading(false); });
@@ -54,7 +72,7 @@ export function useSession(key: string, scope: Scope, initial?: Session, title =
       writes.hold(false);
       if (persistent && value?.ids[value.index]) enqueue(() => writeBookmarkPoint(key, value.ids[value.index], last), `bookmark:${key}`);
     };
-  }, [key, select, enqueue, persistent, suspend, writes]);
+  }, [key, scopeSignature, select, enqueue, persistent, suspend, writes]);
   const watch = useCallback((id: string, at: Point) => {
     const active = current.current; if (!active || active.ids[active.index] !== id || watched.current === id) return;
     token.current ||= `${keyRef.current}:${Date.now()}:${++activationNumber}`;

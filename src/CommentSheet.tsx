@@ -171,12 +171,10 @@ let sheetCache: SheetCache | null = null;
 // returns to where the user was, instead of jumping back to the first comment.
 const scrollPositions: Record<string, number> = {};
 
-export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
-  const insets = useSafeAreaInsets();
+type WorkCommentsController = ReturnType<typeof useWorkComments>;
+
+function useWorkComments(workId: string) {
   const { request, loggedIn, openLogin, checkLogin, loginDebug } = useDouyinSession();
-  const { preferences } = useMobile();
-  const theme = preferences.commentTheme === 'light' ? lightTheme : darkTheme;
-  const { styles, C } = theme;
   const [result, setResult] = useState<GuestCommentPreview | null>(() => cachedGuestComments(workId));
   const [error, setError] = useState(''); const [refreshing, setRefreshing] = useState(false); const [attempt, setAttempt] = useState(0);
   const seed = sheetCache && sheetCache.workId === workId ? sheetCache : null;
@@ -185,20 +183,8 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const [preview, setPreview] = useState<string | null>(null); const [savingPreview, setSavingPreview] = useState(false);
   const [repliesOpen, setRepliesOpen] = useState<Record<string, boolean>>(seed?.repliesOpen ?? {});
   const [replyState, setReplyState] = useState<Record<string, ReplyState>>(seed?.replyState ?? {});
-  const offset = useSharedValue(height); const closing = useSharedValue(false); const previousClose = useRef(closeRequest);
-  const scrollY = useSharedValue(0); const start = useSharedValue({ x: 0, y: 0 }); const [dragging, setDragging] = useState(false);
   const current = result?.workId === workId ? result : null;
-  const listRef = useRef<any>(null); const scrollRestored = useRef(false); const restoredShared = useSharedValue(false); const scrolledShared = useSharedValue(false);
-  const saveScroll = useCallback((id: string, y: number) => { scrollPositions[id] = y; }, []);
-  const onContentSize = useCallback(() => {
-    if (scrollRestored.current) return;
-    scrollRestored.current = true; restoredShared.value = true;
-    const y = scrollPositions[workId] ?? 0;
-    if (y > 0) listRef.current?.scrollToOffset({ offset: y, animated: false });
-  }, [workId, restoredShared]);
 
-  // Detect an already-signed-in session the first time the sheet opens, so a
-  // returning user does not have to open the login page and press "完成" again.
   const initedRef = useRef(false);
   useEffect(() => {
     if (initedRef.current) return;
@@ -210,7 +196,6 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     if (append) setFullLoadingMore(true); else setFullLoading(true);
     setFullError('');
     try {
-      // Same parameter set the desktop app sends for the web comment endpoint.
       const response = await request('comments', {
         aweme_id: workId, cursor, count: '20', item_type: '0',
         insert_ids: '', whale_cut_token: '', cut_version: '1', rcFT: '',
@@ -229,10 +214,6 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     } finally { if (append) setFullLoadingMore(false); else setFullLoading(false); }
   }, [request, workId]);
 
-  // Load a page of replies for one comment. Replies are login-gated: guests get
-  // `total:0`, so we read them through the signed, logged-in page (same channel
-  // as the comment list). The first tap expands a short page of 3 (like Douyin);
-  // each subsequent "展开更多" pulls a fixed 10.
   const loadReplies = useCallback(async (comment: FullComment, cursor: string, append: boolean, limit: number) => {
     setReplyState(previous => {
       const base = previous[comment.id] ?? { items: [], cursor: null, hasMore: false, loaded: false, loading: false, error: '' } as ReplyState;
@@ -297,6 +278,121 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
     return () => { alive = false; abort.abort(); };
   }, [workId, attempt, loggedIn]);
 
+  useEffect(() => { sheetCache = { workId, fullComments, fullCursor, fullHasMore, repliesOpen, replyState }; }, [workId, fullComments, fullCursor, fullHasMore, repliesOpen, replyState]);
+
+  const retry = useCallback(() => { if (!refreshing) setAttempt(value => value + 1); }, [refreshing]);
+  const retryFull = useCallback(() => { if (!fullLoading) void loadFull(fullComments.length ? (fullCursor ?? '0') : '0', false); }, [fullLoading, loadFull, fullComments.length, fullCursor]);
+  const savePreview = useCallback(async () => {
+    if (!preview || savingPreview) return;
+    setSavingPreview(true);
+    try { await saveImageUrl(preview); Alert.alert('已保存', '表情包已保存到手机相册。'); }
+    catch (failure) { Alert.alert('保存失败', failure instanceof Error ? failure.message : '请稍后重试。'); }
+    finally { setSavingPreview(false); }
+  }, [preview, savingPreview]);
+
+  return {
+    loggedIn, openLogin, loginDebug, current, error, refreshing,
+    fullComments, fullCursor, fullHasMore, fullLoading, fullLoadingMore, fullError,
+    rows, repliesOpen, replyState, preview, setPreview, savingPreview, savePreview,
+    loadFull, loadReplies, toggleReplies, setRepliesOpen, retry, retryFull,
+  };
+}
+
+function CommentStatusBanner({ ctrl }: { ctrl: WorkCommentsController }) {
+  const { styles, C } = useCommentTheme();
+  return <>
+    {ctrl.loggedIn
+      ? <View style={styles.noticeFull}><Text style={styles.noticeFullText}>已登录 · 完整评论，支持翻页和楼中楼回复</Text>{ctrl.fullLoading && <ActivityIndicator size="small" color={C.green} />}</View>
+      : <View style={styles.notice}><Text style={styles.noticeText}>游客有限预览 · 登录后可看完整评论和回复</Text><Pressable accessibilityRole="button" accessibilityLabel="登录抖音" onPress={ctrl.openLogin} hitSlop={8}><Text style={styles.loginCta}>登录</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="刷新评论预览" disabled={ctrl.refreshing} onPress={ctrl.retry} hitSlop={8}><Text style={styles.retry}>{ctrl.refreshing ? '读取中' : '刷新'}</Text></Pressable></View>}
+    {!ctrl.loggedIn && ctrl.loginDebug ? <Text style={styles.debug}>{ctrl.loginDebug}</Text> : null}
+  </>;
+}
+
+function FullRowView({ row, ctrl }: { row: ListRow; ctrl: WorkCommentsController }) {
+  const { styles, C } = useCommentTheme();
+  if (row.type === 'comment') {
+    const state = ctrl.replyState[row.item.id];
+    return <FullCommentRow item={row.item} depth={0} repliesOpen={!!ctrl.repliesOpen[row.item.id]} loadingReplies={!!state?.loading} onToggleReplies={row.item.replyCount > 0 ? () => ctrl.toggleReplies(row.item) : undefined} onPreview={ctrl.setPreview} />;
+  }
+  if (row.type === 'reply') return <FullCommentRow item={row.item} depth={1} onPreview={ctrl.setPreview} />;
+  if (row.type === 'replyFooter') return <View style={styles.replyFooter}>
+    {row.hasMore ? <Pressable accessibilityRole="button" disabled={row.loading} onPress={() => void ctrl.loadReplies(row.comment, ctrl.replyState[row.comment.id]?.cursor ?? '0', true, 10)} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>{row.loading ? '正在读取更多…' : '展开更多'}</Text><Ionicons name="chevron-down" size={13} color={C.icon} /></Pressable> : null}
+    <Pressable accessibilityRole="button" onPress={() => ctrl.setRepliesOpen(previous => ({ ...previous, [row.comment.id]: false }))} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>收起</Text><Ionicons name="chevron-up" size={13} color={C.icon} /></Pressable>
+  </View>;
+  if (row.type === 'replyEmpty') return <Text style={styles.replyEmpty}>暂无回复</Text>;
+  return <Pressable accessibilityRole="button" onPress={() => void ctrl.loadReplies(row.comment, '0', false, 3)} style={styles.replyError}><Text style={styles.meta}>回复读取失败：{row.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>;
+}
+
+function AttachmentPreviewModal({ ctrl }: { ctrl: WorkCommentsController }) {
+  const insets = useSafeAreaInsets();
+  const { styles } = useCommentTheme();
+  return <Modal transparent visible={ctrl.preview !== null} animationType="fade" onRequestClose={() => ctrl.setPreview(null)}>
+    <View style={styles.previewRoot}>
+      <Pressable accessibilityLabel="关闭预览" style={StyleSheet.absoluteFill} onPress={() => ctrl.setPreview(null)} />
+      {ctrl.preview ? <Image source={{ uri: ctrl.preview, headers: mediaHeaders }} style={styles.previewImage} resizeMode="contain" /> : null}
+      <View style={[styles.previewBar, { paddingBottom: Math.max(16, insets.bottom) }]}>
+        <Pressable accessibilityRole="button" onPress={() => ctrl.setPreview(null)} style={styles.previewBtn}><Text style={styles.previewBtnText}>关闭</Text></Pressable>
+        <Pressable accessibilityRole="button" disabled={ctrl.savingPreview} onPress={() => void ctrl.savePreview()} style={styles.previewBtn}><Text style={styles.previewSaveText}>{ctrl.savingPreview ? '保存中…' : '保存到相册'}</Text></Pressable>
+      </View>
+    </View>
+  </Modal>;
+}
+
+export function InlineWorkComments({ workId, countHint }: { workId: string; countHint?: number }) {
+  const { preferences } = useMobile();
+  const theme = preferences.commentTheme === 'light' ? lightTheme : darkTheme;
+  const { styles, C } = theme;
+  const ctrl = useWorkComments(workId);
+  const headingCount = ctrl.loggedIn
+    ? (ctrl.fullComments.length || countHint)
+    : (countHint ?? ctrl.current?.items.length);
+
+  return <ThemeCtx.Provider value={theme}><View style={{ paddingTop: 14 }}>
+    <View style={{ paddingHorizontal: 18, paddingBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+      <Text style={styles.title}>{headingCount !== undefined ? `评论 · ${headingCount} 条` : '评论'}</Text>
+    </View>
+    <CommentStatusBanner ctrl={ctrl} />
+    {ctrl.loggedIn ? <View style={styles.list}>
+      {ctrl.fullLoading && !ctrl.fullComments.length && <ActivityIndicator color={C.spinner} style={styles.loading} />}
+      {!!ctrl.fullError && <Pressable onPress={ctrl.retryFull} style={styles.error}><Text style={styles.meta}>{ctrl.fullError}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
+      {!ctrl.fullLoading && !ctrl.fullError && ctrl.rows.length === 0 && <Text style={styles.meta}>还没有评论。</Text>}
+      {ctrl.rows.map(row => <FullRowView key={row.key} row={row} ctrl={ctrl} />)}
+      {ctrl.fullHasMore && ctrl.fullCursor ? (
+        <Pressable accessibilityRole="button" disabled={ctrl.fullLoadingMore} onPress={() => void ctrl.loadFull(ctrl.fullCursor!, true)} style={styles.more}>
+          {ctrl.fullLoadingMore ? <ActivityIndicator color={C.spinner} /> : <Text style={styles.reply}>加载更多评论</Text>}
+        </Pressable>
+      ) : (ctrl.rows.length > 0 ? <Text style={styles.footer}>已展示全部评论</Text> : null)}
+    </View> : <View style={styles.list}>
+      {!ctrl.current && ctrl.refreshing && <ActivityIndicator color={C.spinner} style={styles.loading} />}
+      {!!ctrl.error && <Pressable onPress={ctrl.retry} style={styles.error}><Text style={styles.meta}>{ctrl.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
+      {ctrl.current && (ctrl.current.items.length > 0
+        ? <>
+            {ctrl.current.items.map(item => <GuestCommentRow key={item.id} item={item} />)}
+            <Text style={styles.footer}>仅展示游客可读取的预览，登录后可看全部评论。</Text>
+          </>
+        : <Text style={styles.meta}>分享接口未提供预览，无法据此判断作品是否无评论。</Text>)}
+    </View>}
+    <AttachmentPreviewModal ctrl={ctrl} />
+  </View></ThemeCtx.Provider>;
+}
+
+export function CommentSheet({ workId, height, onClose, onClosing, closeRequest = 0 }: { workId: string; height: number; onClose: () => void; onClosing?: () => void; closeRequest?: number }) {
+  const insets = useSafeAreaInsets();
+  const { preferences } = useMobile();
+  const theme = preferences.commentTheme === 'light' ? lightTheme : darkTheme;
+  const { styles, C } = theme;
+  const ctrl = useWorkComments(workId);
+  const offset = useSharedValue(height); const closing = useSharedValue(false); const previousClose = useRef(closeRequest);
+  const scrollY = useSharedValue(0); const start = useSharedValue({ x: 0, y: 0 }); const [dragging, setDragging] = useState(false);
+  const listRef = useRef<any>(null); const scrollRestored = useRef(false); const restoredShared = useSharedValue(false); const scrolledShared = useSharedValue(false);
+  const saveScroll = useCallback((id: string, y: number) => { scrollPositions[id] = y; }, []);
+  const onContentSize = useCallback(() => {
+    if (scrollRestored.current) return;
+    scrollRestored.current = true; restoredShared.value = true;
+    const y = scrollPositions[workId] ?? 0;
+    if (y > 0) listRef.current?.scrollToOffset({ offset: y, animated: false });
+  }, [workId, restoredShared]);
+
   useEffect(() => {
     closing.value = false; offset.value = height; offset.value = withTiming(0, { duration: 250 });
     return () => cancelAnimation(offset);
@@ -326,68 +422,35 @@ export function CommentSheet({ workId, height, onClose, onClosing, closeRequest 
   const native = useNativeGesture(); const listGesture = useSimultaneousGestures(listPan, native);
   const scroll = useAnimatedScrollHandler({ onScroll: event => { scrollY.value = Math.max(0, event.contentOffset.y); if (event.contentOffset.y > 80) scrolledShared.value = true; if (restoredShared.value) scheduleOnRN(saveScroll, workId, event.contentOffset.y); } });
   const style = useAnimatedStyle(() => ({ transform: [{ translateY: offset.value }] }));
-  const retry = () => { if (!refreshing) setAttempt(value => value + 1); };
-  const retryFull = () => { if (!fullLoading) void loadFull(fullComments.length ? (fullCursor ?? '0') : '0', false); };
-  const savePreview = useCallback(async () => {
-    if (!preview || savingPreview) return;
-    setSavingPreview(true);
-    try { await saveImageUrl(preview); Alert.alert('已保存', '表情包已保存到手机相册。'); }
-    catch (failure) { Alert.alert('保存失败', failure instanceof Error ? failure.message : '请稍后重试。'); }
-    finally { setSavingPreview(false); }
-  }, [preview, savingPreview]);
-  useEffect(() => { sheetCache = { workId, fullComments, fullCursor, fullHasMore, repliesOpen, replyState }; }, [workId, fullComments, fullCursor, fullHasMore, repliesOpen, replyState]);
+
   return <ThemeCtx.Provider value={theme}><>
     <Animated.View accessibilityViewIsModal style={[styles.sheet, { height }, style]}>
-    <GestureDetector gesture={pan}><View style={styles.header}><View style={styles.grip} /><Text style={styles.title}>{loggedIn ? `评论 · ${fullComments.length} 条` : `评论预览${current ? ` · ${current.items.length} 条` : ''}`}</Text><Pressable accessibilityLabel="关闭评论" onPress={close} hitSlop={15} style={styles.close}><Text style={styles.closeText}>×</Text></Pressable></View></GestureDetector>
-    {loggedIn
-      ? <View style={styles.noticeFull}><Text style={styles.noticeFullText}>已登录 · 完整评论，支持翻页和楼中楼回复</Text>{fullLoading && <ActivityIndicator size="small" color={C.green} />}</View>
-      : <View style={styles.notice}><Text style={styles.noticeText}>游客有限预览 · 登录后可看完整评论和回复</Text><Pressable accessibilityRole="button" accessibilityLabel="登录抖音" onPress={openLogin} hitSlop={8}><Text style={styles.loginCta}>登录</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel="刷新评论预览" disabled={refreshing} onPress={retry} hitSlop={8}><Text style={styles.retry}>{refreshing ? '读取中' : '刷新'}</Text></Pressable></View>}
-    {!loggedIn && loginDebug ? <Text style={styles.debug}>{loginDebug}</Text> : null}
-    {loggedIn
+    <GestureDetector gesture={pan}><View style={styles.header}><View style={styles.grip} /><Text style={styles.title}>{ctrl.loggedIn ? `评论 · ${ctrl.fullComments.length} 条` : `评论预览${ctrl.current ? ` · ${ctrl.current.items.length} 条` : ''}`}</Text><Pressable accessibilityLabel="关闭评论" onPress={close} hitSlop={15} style={styles.close}><Text style={styles.closeText}>×</Text></Pressable></View></GestureDetector>
+    <CommentStatusBanner ctrl={ctrl} />
+    {ctrl.loggedIn
       ? <>
-        {fullLoading && !fullComments.length && <ActivityIndicator color={C.spinner} style={styles.loading} />}
-        {!!fullError && <Pressable onPress={retryFull} style={styles.error}><Text style={styles.meta}>{fullError}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
-        {!fullLoading || fullComments.length > 0 ? <GestureDetector gesture={listGesture}><Animated.FlatList ref={listRef} onContentSizeChange={onContentSize} data={rows} keyExtractor={row => row.key} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
+        {ctrl.fullLoading && !ctrl.fullComments.length && <ActivityIndicator color={C.spinner} style={styles.loading} />}
+        {!!ctrl.fullError && <Pressable onPress={ctrl.retryFull} style={styles.error}><Text style={styles.meta}>{ctrl.fullError}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
+        {!ctrl.fullLoading || ctrl.fullComments.length > 0 ? <GestureDetector gesture={listGesture}><Animated.FlatList ref={listRef} onContentSizeChange={onContentSize} data={ctrl.rows} keyExtractor={row => row.key} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
           initialNumToRender={10} maxToRenderPerBatch={8} windowSize={5} scrollEnabled={!dragging} onScroll={scroll} scrollEventThrottle={16} bounces={false} overScrollMode="never"
-          ListEmptyComponent={!fullLoading && !fullError ? <Text style={styles.meta}>还没有评论。</Text> : undefined}
+          ListEmptyComponent={!ctrl.fullLoading && !ctrl.fullError ? <Text style={styles.meta}>还没有评论。</Text> : undefined}
           onEndReachedThreshold={0.7}
-          onEndReached={() => { if (fullHasMore && !fullLoading && !fullLoadingMore && scrolledShared.value && fullCursor) void loadFull(fullCursor, true); }}
-          ListFooterComponent={fullHasMore
-            ? (fullLoadingMore ? <ActivityIndicator color={C.spinner} style={styles.more} /> : undefined)
-            : rows.length ? <Text style={styles.footer}>已展示全部评论</Text> : undefined}
-          renderItem={({ item }) => {
-            if (item.type === 'comment') {
-              const state = replyState[item.item.id];
-              return <FullCommentRow item={item.item} depth={0} repliesOpen={!!repliesOpen[item.item.id]} loadingReplies={!!state?.loading} onToggleReplies={item.item.replyCount > 0 ? () => toggleReplies(item.item) : undefined} onPreview={setPreview} />;
-            }
-            if (item.type === 'reply') return <FullCommentRow item={item.item} depth={1} onPreview={setPreview} />;
-            if (item.type === 'replyFooter') return <View style={styles.replyFooter}>
-              {item.hasMore ? <Pressable accessibilityRole="button" disabled={item.loading} onPress={() => void loadReplies(item.comment, replyState[item.comment.id]?.cursor ?? '0', true, 10)} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>{item.loading ? '正在读取更多…' : '展开更多'}</Text><Ionicons name="chevron-down" size={13} color={C.icon} /></Pressable> : null}
-              <Pressable accessibilityRole="button" onPress={() => setRepliesOpen(previous => ({ ...previous, [item.comment.id]: false }))} hitSlop={6} style={styles.footerActionRow}><Text style={styles.footerAction}>收起</Text><Ionicons name="chevron-up" size={13} color={C.icon} /></Pressable>
-            </View>;
-            if (item.type === 'replyEmpty') return <Text style={styles.replyEmpty}>暂无回复</Text>;
-            return <Pressable accessibilityRole="button" onPress={() => void loadReplies(item.comment, '0', false, 3)} style={styles.replyError}><Text style={styles.meta}>回复读取失败：{item.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>;
-          }} /></GestureDetector> : null}
+          onEndReached={() => { if (ctrl.fullHasMore && !ctrl.fullLoading && !ctrl.fullLoadingMore && scrolledShared.value && ctrl.fullCursor) void ctrl.loadFull(ctrl.fullCursor, true); }}
+          ListFooterComponent={ctrl.fullHasMore
+            ? (ctrl.fullLoadingMore ? <ActivityIndicator color={C.spinner} style={styles.more} /> : undefined)
+            : ctrl.rows.length ? <Text style={styles.footer}>已展示全部评论</Text> : undefined}
+          renderItem={({ item }) => <FullRowView row={item} ctrl={ctrl} />} /></GestureDetector> : null}
       </>
       : <>
-        {!current && refreshing && <ActivityIndicator color={C.spinner} style={styles.loading} />}
-        {!!error && <Pressable onPress={retry} style={styles.error}><Text style={styles.meta}>{error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
-        {current && <GestureDetector gesture={listGesture}><Animated.FlatList ref={listRef} onContentSizeChange={onContentSize} data={current.items} keyExtractor={item => item.id} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
+        {!ctrl.current && ctrl.refreshing && <ActivityIndicator color={C.spinner} style={styles.loading} />}
+        {!!ctrl.error && <Pressable onPress={ctrl.retry} style={styles.error}><Text style={styles.meta}>{ctrl.error}</Text><Text style={styles.retry}>点按重试</Text></Pressable>}
+        {ctrl.current && <GestureDetector gesture={listGesture}><Animated.FlatList ref={listRef} onContentSizeChange={onContentSize} data={ctrl.current.items} keyExtractor={item => item.id} contentContainerStyle={[styles.list, { paddingBottom: Math.max(16, insets.bottom) }]} style={{ flex: 1 }}
           initialNumToRender={10} maxToRenderPerBatch={8} windowSize={5} scrollEnabled={!dragging} onScroll={scroll} scrollEventThrottle={16} bounces={false} overScrollMode="never"
           ListEmptyComponent={<Text style={styles.meta}>分享接口未提供预览，无法据此判断作品是否无评论。</Text>}
-          ListFooterComponent={current.items.length ? <Text style={styles.footer}>仅展示游客可读取的预览，登录后可看全部评论。</Text> : undefined}
+          ListFooterComponent={ctrl.current.items.length ? <Text style={styles.footer}>仅展示游客可读取的预览，登录后可看全部评论。</Text> : undefined}
           renderItem={({ item }) => <GuestCommentRow item={item} />} /></GestureDetector>}
       </>}
   </Animated.View>
-    <Modal transparent visible={preview !== null} animationType="fade" onRequestClose={() => setPreview(null)}>
-      <View style={styles.previewRoot}>
-        <Pressable accessibilityLabel="关闭预览" style={StyleSheet.absoluteFill} onPress={() => setPreview(null)} />
-        {preview ? <Image source={{ uri: preview, headers: mediaHeaders }} style={styles.previewImage} resizeMode="contain" /> : null}
-        <View style={[styles.previewBar, { paddingBottom: Math.max(16, insets.bottom) }]}>
-          <Pressable accessibilityRole="button" onPress={() => setPreview(null)} style={styles.previewBtn}><Text style={styles.previewBtnText}>关闭</Text></Pressable>
-          <Pressable accessibilityRole="button" disabled={savingPreview} onPress={() => void savePreview()} style={styles.previewBtn}><Text style={styles.previewSaveText}>{savingPreview ? '保存中…' : '保存到相册'}</Text></Pressable>
-        </View>
-      </View>
-    </Modal>
+    <AttachmentPreviewModal ctrl={ctrl} />
   </></ThemeCtx.Provider>;
 }

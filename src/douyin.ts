@@ -29,6 +29,19 @@ type GalleryResult = Presentation & {
   images: { candidates: string[]; liveCandidates: string[] }[];
   musicCandidates: string[];
   author?: string;
+  article?: ArticleData;
+};
+
+export type ArticleData = {
+  title: string;
+  abstract: string;
+  body: string;
+  readTimeMinutes?: number;
+  readTimeSeconds?: number;
+  buttonText: string;
+  backgroundColor?: string;
+  publishedAt?: number;
+  headerImages: string[];
 };
 
 export type MediaResult = VideoResult | GalleryResult;
@@ -71,6 +84,30 @@ function videoSize(value: RecordValue | undefined) {
   const width = value?.width; const height = value?.height;
   return typeof width === 'number' && typeof height === 'number' && Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 && width <= 16_384 && height <= 16_384 ? { width, height } : undefined;
 }
+function parseJsonObject(value: unknown): RecordValue | undefined {
+  if (typeof value !== 'string' || !value.trim()) return object(value);
+  try { return object(JSON.parse(value)); } catch { return undefined; }
+}
+export function formatArticleBody(raw: string): string {
+  return raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|li|h[1-6])>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+function positiveInt(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : undefined;
+}
+function isAudioUrl(url: string): boolean {
+  return /\.(?:mp3|m4a|aac|wav|ogg|flac)(?:\?|$)/i.test(url);
+}
 
 export function parseMediaDetail(body: string, id: string): MediaResult {
   let payload: RecordValue | undefined;
@@ -105,6 +142,81 @@ export function parseMediaDetail(body: string, id: string): MediaResult {
     const value = counts?.[field]; if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) statistics[key] = value;
   }
   const common = { id, title, ...(author && { author }), ...(authorAvatar && { authorAvatar }), ...(authorSecUid && { authorSecUid }), ...(Object.keys(statistics).length && { statistics }) };
+  const articleInfo = object(detail.article_info);
+  const articleContent = parseJsonObject(articleInfo?.article_content);
+  const articleFe = parseJsonObject(articleInfo?.fe_data);
+  const articleClient = parseJsonObject(articleInfo?.client_data);
+  const articleBtn = object(articleClient?.detail_btn_info);
+  const rawMarkdown = displayText(articleContent?.markdown) ?? displayText(articleContent?.content) ?? displayText(articleFe?.description) ?? '';
+  const rawAbstract = displayText(articleContent?.long_article_abstract) ?? displayText(articleContent?.abstract) ?? '';
+  const articleBody = formatArticleBody(rawMarkdown || rawAbstract);
+  const articleAbstract = formatArticleBody(rawAbstract || articleBody);
+  const isArticle = Boolean(
+    articleInfo && (detail.aweme_type === 163 || displayText(articleInfo.business_id) === 'article' || articleBody || displayText(articleBtn?.text)),
+  );
+  if (isArticle && articleInfo) {
+    const video = object(detail.video);
+    const music = object(detail.music);
+    const matchedSound = object(music?.matched_pgc_sound);
+    const rawTime = detail.create_time;
+    const publishedAt = typeof rawTime === 'number' && Number.isFinite(rawTime) && rawTime > 0
+      ? (rawTime < 1e11 ? rawTime * 1000 : rawTime)
+      : undefined;
+    const headerImages = mediaUrls(
+      object(articleFe?.head_poster_list)?.url_list,
+      articleFe?.pre_cover ? [articleFe.pre_cover] : undefined,
+      object(video?.cover)?.url_list,
+      object(video?.origin_cover)?.url_list,
+    );
+    const rawDetailImages = Array.isArray(detail.images) ? detail.images : [];
+    const detailGallery = rawDetailImages.map((value) => {
+      const image = object(value);
+      const imgVideo = object(image?.video);
+      return {
+        candidates: mediaUrls(image?.url_list, object(image?.display_image)?.url_list),
+        liveCandidates: mediaUrls(
+          object(imgVideo?.play_addr_h264)?.url_list,
+          object(imgVideo?.play_addr)?.url_list,
+          object(imgVideo?.play_addr_lowbr)?.url_list,
+          object(image?.live_image)?.url_list,
+          imgVideo?.url_list,
+        ),
+      };
+    }).filter((entry) => entry.candidates.length > 0);
+    const extraFeImages = Array.isArray(articleFe?.image_list)
+      ? articleFe.image_list.flatMap((entry) => {
+          if (typeof entry === 'string') return mediaUrls([entry]);
+          const obj = object(entry);
+          return mediaUrls(obj?.url_list, obj?.url ? [obj.url] : undefined);
+        })
+      : [];
+    const images = detailGallery.length
+      ? detailGallery
+      : [
+          ...(headerImages.length ? [{ candidates: headerImages, liveCandidates: [] }] : []),
+          ...extraFeImages.filter((url) => !headerImages.includes(url)).map((url) => ({ candidates: [url], liveCandidates: [] })),
+        ];
+    const playUrls = mediaUrls(object(video?.play_addr_h264)?.url_list, object(video?.play_addr)?.url_list);
+    const rawMusic = mediaUrls(
+      object(music?.play_url)?.url_list, music?.url_list, object(matchedSound?.play_url)?.url_list,
+    );
+    const audioPlayUrls = playUrls.filter((url) => isAudioUrl(url) || rawMusic.length === 0);
+    const musicCandidates = [...new Set([...rawMusic, ...audioPlayUrls])].slice(0, 8);
+    const articleTitle = displayText(articleInfo.article_title) ?? displayText(detail.desc) ?? '抖音文章';
+    const bgRaw = typeof articleFe?.background_color === 'string' ? articleFe.background_color.trim() : '';
+    const article: ArticleData = {
+      title: articleTitle,
+      abstract: articleAbstract,
+      body: articleBody,
+      readTimeMinutes: positiveInt(articleInfo.read_time) ?? positiveInt(articleFe?.read_time),
+      readTimeSeconds: positiveInt(articleFe?.read_time_second),
+      buttonText: displayText(articleBtn?.text) ?? '阅读文章',
+      ...( /^#[0-9a-fA-F]{6}$/.test(bgRaw) ? { backgroundColor: bgRaw } : {}),
+      ...(publishedAt !== undefined ? { publishedAt } : {}),
+      headerImages,
+    };
+    return { ...common, title: articleTitle, images, musicCandidates, article };
+  }
   if (Array.isArray(detail.images) && detail.images.length > 0) {
     const images = detail.images.map((value) => {
       const image = object(value);

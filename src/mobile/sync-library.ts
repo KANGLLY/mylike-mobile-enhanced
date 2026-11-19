@@ -1,5 +1,6 @@
 import { parseVideoItems, parseVideoList, CommentReadError, type VideoItem } from '../douyin-bridge.ts';
 import type { LibraryImport, LibraryWork } from '../library-format.ts';
+import { appendSyncLog, clearSyncLog } from './sync-log.ts';
 
 // The likes / favourites lists are Argus-protected private endpoints: their
 // requests must be signed by Douyin's own page SDK. We load the logged-in
@@ -13,6 +14,7 @@ export type SyncStopReason =
   | 'total_timeout'
   | 'scroll_limit'
   | 'rate_limit'
+  | 'captcha'
   | 'auth'
   | 'restricted'
   | 'cancelled'
@@ -162,6 +164,8 @@ export function formatSyncReason(reason: SyncStopReason, diagnostic?: Partial<Sy
       return '达到单次最大翻页次数上限，可从断点继续';
     case 'rate_limit':
       return '触发抖音限频（429 / 请求过快），可稍后从断点继续';
+    case 'captcha':
+      return '触发抖音安全验证/滑块，请在弹出的验证页完成后重试';
     case 'auth':
       return '抖音登录状态失效，重新登录后可继续';
     case 'restricted':
@@ -178,7 +182,12 @@ export function formatSyncDiagnostic(diag: SyncDiagnostic): string {
   const secs = Math.max(1, Math.round(diag.elapsedMs / 1000));
   const cursorText = diag.nextCursor ? `，断点游标 ${diag.nextCursor}` : '';
   const statusText = diag.lastStatus ? `，HTTP ${diag.lastStatus}${diag.lastStatusCode ? `/code=${diag.lastStatusCode}` : ''}` : '';
-  return `${engineLabel} · ${diag.pages} 页 / ${diag.items} 条 · ${secs}s${statusText}${cursorText} · ${formatSyncReason(diag.reason, diag)}`;
+  const reasonText = formatSyncReason(diag.reason, diag);
+  const rawDetail = (diag.detail || '').trim();
+  const detailText = rawDetail && rawDetail !== reasonText && !reasonText.includes(rawDetail)
+    ? ` | ${rawDetail.slice(0, 140)}`
+    : '';
+  return `${engineLabel} · ${diag.pages} 页 / ${diag.items} 条 · ${secs}s${statusText}${cursorText} · ${reasonText}${detailText}`;
 }
 
 async function collectFromCapture(
@@ -383,10 +392,21 @@ async function collectFromCapture(
     updatedAt: Date.now(),
   };
   await onCheckpoint?.(checkpoint);
+  appendSyncLog(`checkpoint kind=${kind} ${formatSyncDiagnostic(diagnostic)}`);
 
   if (captureFailure) throw captureFailure;
 
   if (!captured.length) {
+    if (externalDiag?.reason === 'cancelled') throw new Error('已取消更新。');
+    if (externalDiag?.reason === 'captcha') {
+      throw new CommentReadError('restricted', diagnostic.detail || '抖音触发了安全验证，请完成验证后重试。');
+    }
+    if (externalDiag?.reason === 'auth') {
+      throw new CommentReadError('auth', diagnostic.detail || '登录状态已失效，请重新登录抖音。');
+    }
+    if (externalDiag?.detail) {
+      throw new CommentReadError('empty', externalDiag.detail);
+    }
     throw new CommentReadError('empty', kind === 'likes'
       ? '没有捕获到“我的喜欢”数据，请确认已登录抖音后重试。'
       : '没有捕获到“我的收藏”数据，请确认已登录抖音后重试。');
@@ -407,6 +427,8 @@ export async function syncDouyinLibrary(
   target: SyncTarget = 'both',
   extras?: SyncExtras,
 ): Promise<SyncResult> {
+  clearSyncLog();
+  appendSyncLog(`syncDouyinLibrary start mode=${mode} target=${target} resumeLikes=${extras?.resumeCursor?.likes ?? '-'} resumeFavs=${extras?.resumeCursor?.favorites ?? '-'}`);
   let liked = 0;
   let saved = 0;
 

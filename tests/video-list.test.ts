@@ -58,3 +58,31 @@ test('parseVideoList stops gracefully when the cursor no longer advances', () =>
   assert.equal(page.nextCursor, null);
   assert.equal(page.hasMore, false);
 });
+
+test('parseVideoList preserves article title and head poster cover when desc is empty', () => {
+  const articleList = JSON.stringify({
+    status_code: 0,
+    has_more: 0,
+    max_cursor: '0',
+    aweme_list: [
+      {
+        aweme_id: '7709124097083905018',
+        aweme_type: 163,
+        desc: '',
+        create_time: 1794920326,
+        author: { nickname: '相思' },
+        article_info: {
+          article_title: '没话题就聊这些',
+          fe_data: JSON.stringify({
+            head_poster_list: { url_list: ['https://p9-sign.douyinpic.com/header.jpeg'] },
+          }),
+        },
+      },
+    ],
+  });
+  const page = parseVideoList(articleList, '0');
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].title, '没话题就聊这些');
+  assert.equal(page.items[0].coverUrl, 'https://p9-sign.douyinpic.com/header.jpeg');
+  assert.equal(page.items[0].kind, 'gallery');
+});

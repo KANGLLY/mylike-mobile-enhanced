@@ -8,6 +8,15 @@ import {
   type SyncCheckpoint,
 } from '../src/mobile/sync-library.ts';
 import type { LibraryImport } from '../src/library-format.ts';
+import {
+  appendSyncLog,
+  clearSyncLog,
+  hydrateSyncLog,
+  readSyncLogLines,
+  readSyncLogText,
+  sanitizeBodyPreview,
+  subscribeSyncLog,
+} from '../src/mobile/sync-log.ts';
 
 function page(ids: string[], opts?: { hasMore?: number; cursor?: string }): string {
   return JSON.stringify({
@@ -179,4 +188,68 @@ test('syncDouyinLibrary flushes batches incrementally and saves resumable checkp
   assert.equal(checkpoints[2].resumeCursor, null);
   assert.equal(checkpoints[2].receivedCount, 13);
   assert.equal(checkpoints[2].diagnostic.reason, 'completed');
+});
+
+test('syncDouyinLibrary preserves captcha/detail diagnostics on empty capture and surfaces detail text', async () => {
+  const checkpoints: SyncCheckpoint[] = [];
+  await assert.rejects(
+    () => syncDouyinLibrary(
+      async () => ({
+        pages: [],
+        diagnostic: {
+          reason: 'captcha',
+          engine: 'scroll',
+          pages: 0,
+          hasMore: null,
+          nextCursor: '1612187334000',
+          elapsedMs: 18_000,
+          detail: '触发安全验证(验证码)',
+        },
+      }),
+      async () => {},
+      undefined,
+      undefined,
+      'resume',
+      'likes',
+      {
+        resumeCursor: { likes: '1612187334000' },
+        onCheckpoint: (cp) => { checkpoints.push(cp); },
+      },
+    ),
+    /触发安全验证/,
+  );
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].resumeCursor, '1612187334000');
+  assert.equal(checkpoints[0].diagnostic.reason, 'captcha');
+  const formatted = formatSyncDiagnostic(checkpoints[0].diagnostic);
+  assert.ok(formatted.includes('触发安全验证(验证码)'));
+});
+
+test('sync-log ring buffer caps at 150 lines, hydrates persisted state, and notifies subscribers', () => {
+  clearSyncLog();
+  let notifications = 0;
+  const unsub = subscribeSyncLog(() => { notifications += 1; });
+
+  for (let i = 1; i <= 165; i += 1) {
+    appendSyncLog(`line ${i}`);
+  }
+  const lines = readSyncLogLines();
+  assert.equal(lines.length, 150);
+  assert.ok(lines[0].endsWith('line 16'));
+  assert.ok(lines[149].endsWith('line 165'));
+  assert.equal(notifications, 165);
+
+  unsub();
+  clearSyncLog();
+  assert.equal(readSyncLogLines().length, 0);
+
+  hydrateSyncLog(JSON.stringify('[10:00:00.000] first\n[10:00:01.000] second'));
+  assert.deepEqual(readSyncLogLines(), ['[10:00:00.000] first', '[10:00:01.000] second']);
+  // Does not overwrite non-empty in-memory logs
+  hydrateSyncLog('ignored');
+  assert.equal(readSyncLogLines().length, 2);
+  assert.ok(readSyncLogText().includes('second'));
+
+  clearSyncLog();
+  assert.equal(sanitizeBodyPreview('  hello\n\tworld   test  ', 12), 'hello world');
 });

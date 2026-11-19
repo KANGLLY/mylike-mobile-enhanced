@@ -10,6 +10,7 @@ import {
   type SyncProgress,
   type SyncTarget,
 } from './sync-library';
+import { hydrateSyncLog, readSyncLogText } from './sync-log';
 
 // A single, app-wide update task. It lives above the navigator so leaving the
 // More/Settings screen keeps the likes/favourites capture running in the
@@ -30,6 +31,7 @@ const CHECKPOINT_KEY = {
   likes: 'sync:checkpoint:likes',
   favorites: 'sync:checkpoint:favorites',
 } as const;
+const DEBUG_LOG_KEY = 'sync:debug_log';
 
 function parseCheckpoint(raw: string | null, kind: 'likes' | 'favorites'): SyncCheckpoint | null {
   if (!raw) return null;
@@ -71,8 +73,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     void Promise.all([
       store.readState(CHECKPOINT_KEY.likes),
       store.readState(CHECKPOINT_KEY.favorites),
-    ]).then(([rawLikes, rawFavs]) => {
+      store.readState(DEBUG_LOG_KEY),
+    ]).then(([rawLikes, rawFavs, rawLog]) => {
       if (!alive) return;
+      hydrateSyncLog(rawLog);
       setCheckpoints({
         likes: parseCheckpoint(rawLikes, 'likes'),
         favorites: parseCheckpoint(rawFavs, 'favorites'),
@@ -156,6 +160,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
         Alert.alert('更新中断', [msg, ...diagLines].join('\n\n'));
       }
     } finally {
+      try { await store.writeState(DEBUG_LOG_KEY, readSyncLogText()); } catch { /* ignore persistence failure */ }
       running.current = false;
       setSyncing(false);
       setActiveTarget(null);

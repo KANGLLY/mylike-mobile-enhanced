@@ -2,7 +2,8 @@ import type { LibraryFilter, LibraryWork } from '../library-format.ts';
 import { publicationBounds, type PublicationPeriod } from '../library-period.ts';
 
 export type Source = 'all' | 'likes' | 'favorites';
-export type Scope = { source: Source; search?: string; filter?: LibraryFilter; period?: PublicationPeriod; folderId?: string | null; author?: string };
+export type HomePlaybackRanges = Partial<Record<Source, string[]>>;
+export type Scope = { source: Source; search?: string; filter?: LibraryFilter; period?: PublicationPeriod; periods?: readonly string[]; folderId?: string | null; author?: string };
 export type Work = LibraryWork & { liked: boolean; saved: boolean };
 export type Point = { kind: 'video' | 'gallery'; value: number };
 export type Session = { ids: string[]; index: number; mode: 'ordered' | 'shuffle'; point: Point | null };
@@ -14,6 +15,7 @@ export type Preferences = {
   bottomOffset: number; meBottomOffset: number;
   seekOffset: number; captionOffset: number; toolbarOffset: number;
   detailSeekOffset: number; detailCaptionOffset: number; detailToolbarOffset: number;
+  homeRanges: HomePlaybackRanges;
 };
 export const defaultPreferences: Preferences = {
   auto: false, rate: 1, clear: false,
@@ -22,6 +24,7 @@ export const defaultPreferences: Preferences = {
   bottomOffset: 0, meBottomOffset: 0,
   seekOffset: 0, captionOffset: 0, toolbarOffset: 0,
   detailSeekOffset: 28, detailCaptionOffset: 28, detailToolbarOffset: 28,
+  homeRanges: {},
 };
 export const rates = [0.75, 1, 1.25, 1.5, 2];
 export const mobileSchema = `
@@ -67,6 +70,27 @@ export function whereScope(scope: Scope, ignorePeriod = false) {
   if (!ignorePeriod && scope.period === 'unknown') clauses.push("strftime('%Y-%m',w.published_at/1000.0,'unixepoch','+8 hours') IS NULL");
   else if (!ignorePeriod && scope.period && scope.period !== 'unknown') {
     clauses.push('w.published_at>=? AND w.published_at<?'); values.push(...publicationBounds(scope.period));
+  } else if (!ignorePeriod && scope.periods && scope.periods.length > 0) {
+    const periodClauses: string[] = [];
+    for (const token of scope.periods) {
+      if (token === 'unknown') {
+        periodClauses.push("strftime('%Y-%m',w.published_at/1000.0,'unixepoch','+8 hours') IS NULL");
+      } else {
+        const yearOnly = token.match(/^(\d{4})$/);
+        const yearMonth = token.match(/^(\d{4})-(\d{2})$/);
+        if (yearOnly) {
+          periodClauses.push('(w.published_at>=? AND w.published_at<?)');
+          values.push(...publicationBounds({ year: Number(yearOnly[1]) }));
+        } else if (yearMonth) {
+          const month = Number(yearMonth[2]);
+          if (month >= 1 && month <= 12) {
+            periodClauses.push('(w.published_at>=? AND w.published_at<?)');
+            values.push(...publicationBounds({ year: Number(yearMonth[1]), month }));
+          }
+        }
+      }
+    }
+    if (periodClauses.length > 0) clauses.push(`(${periodClauses.join(' OR ')})`);
   }
   return { where: `WHERE ${clauses.join(' AND ')}`, values };
 }
@@ -118,9 +142,23 @@ export function parsePreferences(value: string | null): Preferences {
       detailSeekOffset: Math.round(num(p.detailSeekOffset, -20, 120, 28)),
       detailCaptionOffset: Math.round(num(p.detailCaptionOffset, -20, 120, 28)),
       detailToolbarOffset: Math.round(num(p.detailToolbarOffset, -20, 120, 28)),
+      homeRanges: parseHomeRanges(p.homeRanges),
     };
   }
   catch { return { ...defaultPreferences }; }
+}
+const PERIOD_TOKEN = /^(?:unknown|\d{4}(?:-(?:0[1-9]|1[0-2]))?)$/;
+function parseHomeRanges(raw: unknown): HomePlaybackRanges {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const obj = raw as Record<string, unknown>;
+  const out: HomePlaybackRanges = {};
+  for (const key of ['all', 'likes', 'favorites'] as const) {
+    const list = obj[key];
+    if (!Array.isArray(list)) continue;
+    const cleaned = [...new Set(list.filter((v): v is string => typeof v === 'string' && PERIOD_TOKEN.test(v)))].slice(0, 600);
+    if (cleaned.length > 0) out[key] = cleaned;
+  }
+  return out;
 }
 export function swipeStep(distance: number, velocity: number, extent: number): -1 | 0 | 1 {
   'worklet';

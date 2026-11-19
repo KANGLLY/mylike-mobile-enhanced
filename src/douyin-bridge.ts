@@ -264,18 +264,25 @@ function awemeToItem(value: unknown): VideoItem | null {
   const video = record(row.video);
   const author = record(row.author);
   const images = Array.isArray(row.images) ? row.images : [];
+  const article = record(row.article_info);
+  let articleFe: Record<string, unknown> | undefined;
+  const rawFe = text(article?.fe_data);
+  if (rawFe) {
+    try { articleFe = record(JSON.parse(rawFe)); } catch { /* ignore */ }
+  }
   const cover =
-    coverUrl(record(video?.cover)?.url_list)
+    coverUrl(record(articleFe?.head_poster_list)?.url_list)
+    ?? coverUrl(record(video?.cover)?.url_list)
     ?? coverUrl(record(video?.origin_cover)?.url_list)
     ?? coverUrl(record(images[0])?.url_list);
   const rawTime = count(row.create_time);
   return {
     id,
-    title: truncate(text(row.desc), 500),
+    title: truncate(text(row.desc) || text(article?.article_title), 500),
     author: truncate(text(author?.nickname), 200) || '抖音用户',
     coverUrl: cover,
     publishedAt: rawTime > 0 ? (rawTime < 1e11 ? rawTime * 1000 : rawTime) : null,
-    kind: images.length ? 'gallery' : 'video',
+    kind: images.length || article ? 'gallery' : 'video',
   };
 }
 

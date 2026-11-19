@@ -4,11 +4,12 @@
 
 # MyLike 移动端
 
-**在 Android 上回看你的喜欢。**
+**在 Android / iOS 上回看你的喜欢。**
 
-导入 MyLike 桌面端的喜欢与收藏清单，随时查找、播放和续看。
+导入 MyLike 桌面端的喜欢与收藏清单，或手机端直连同步，随时查找、播放、读文章和续看。
 
 [![Android](https://img.shields.io/badge/Android-APK-3ddc84?style=flat-square)](https://github.com/KANGLLY/mylike-mobile-enhanced/releases)
+[![iOS](https://img.shields.io/badge/iOS-IPA-0a84ff?style=flat-square)](https://github.com/KANGLLY/mylike-mobile-enhanced/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6bb99b?style=flat-square)](LICENSE)
 
 [下载应用](https://github.com/KANGLLY/mylike-mobile-enhanced/releases) · [功能特性](#功能特性) · [界面预览](#界面预览) · [快速上手](#快速上手) · [反馈问题](https://github.com/KANGLLY/mylike-mobile-enhanced/issues)
@@ -44,18 +45,21 @@
 
 下载 `.apk`，在手机上打开文件并按系统提示安装。
 
+### iOS
+
+下载未签名测试包 `.ipa`，可通过 AltStore、Sideloadly、TrollStore 等工具自签名安装（仅提供无签名 ARM64 构建包）。
+
 ## 功能特性
 
 **本版新增 / 增强（相对原版 MyLike）：**
 
-- **完整评论区** — 登录抖音后可查看全部评论并翻页；楼中楼回复首次展开 3 条、之后每次 10 条，可「展开更多 / 收起」，回复缩进区分。
-- **手机端拉取并更新喜欢的视频和收藏** —— 登录抖音后可在手机上直接拉取、更新「喜欢」与「收藏支持「更新顶部（只补最新）」「向下采集（继续更旧）」两种方式，可后台继续、进度、随时取消。(最好还是在pc端拉取的JSON导入到手机端)
-- **评论主题与表情** — 评论区支持深色 / 浅色两套背景；评论内联显示抖音原生小表情，支持表情包 / 大表情与图片评论缩略图。
-- **点赞 / 收藏同步** — 登录后把「我的喜欢 / 我的收藏」同步到本机，支持「更新顶部（只补最新）」「向下采集（继续更旧）」，可后台继续、显示进度、随时取消。
-- **导出清单** — 把喜欢的作品导出为 JSON，可导入 PC 桌面版 MyLike。
-- **播放增强** — 长按二倍速（竖屏 / 全屏）、横向视频「全屏观看」（画面放大不旋转整机）、可开关弹幕。
-- **保存到相册** — 长按菜单可把视频、图集图片、音频保存到手机。
-- **细节优化** — 同一视频的评论关闭再打开不重新加载；默认爱心桌面图标。
+- **完整评论区与表情图** — 登录抖音后可查看全部评论并滑动自动加载更多；楼中楼回复首次展开 3 条、之后每次 10 条，回复缩进区分，评论内联显示抖音原生小表情，点击图片/大表情包可放大并保存到相册，记住每条视频的评论滚动位置，支持深色 / 浅色背景切换。
+- **实时弹幕与自定义设置** — 可开关抖音实时弹幕（含原版小表情、倍速同步及打开评论区时上方缩略视频继续滚动），可在长按「播放选项 → 弹幕设置」调节不透明度、字体大小、飞行速度与展示行数。
+- **抖音「文章」与长图文阅读** — 识别抖音文章作品，背景图底部自然渐变融入纯黑底并随正文同步缓缓上移，配备背景配乐与「阅读文章」按钮；点开「阅读文章」或长文案图文的「展开」，即可进入全文阅读页并在正文下方直接衔接评论区。
+- **首页轮播日期范围筛选** — 「推荐 / 喜欢 / 收藏」三个频道可分别勾选参与轮播的年份与具体月份，轻松跳过早期内容，改完实时刷新轮播队列。
+- **手机端喜欢 / 收藏同步与断点续传** — 登录后支持拆开更新「我的喜欢」与「我的收藏」，提供「更新顶部」「向下采集」「整体更新」与「从上次断点继续」；自动每 10 页增量保存进度、遇安全验证自动弹出验证页并在完成后继续，内置「查看 / 导出同步日志」（大数据量仍推荐先在 PC 端导出 JSON 导入）。
+- **播放增强与界面调节** — 仿抖音底部进度条相对滑动快进/倒退、两侧长按二倍速锁定（竖屏/全屏）、横向视频「全屏观看」（放大不旋转整机），长按「播放选项 → 界面高度」可分别调节首页与无底栏详情页的进度条、文案、右侧栏以及「我的」底部高度。
+- **保存与导出** — 长按菜单可把视频、图集图片、背景音频保存到手机相册（iOS 音频通过系统分享保存），并在「更多」导出喜欢的作品 JSON 导入 PC 桌面版。
 
 **原版功能（MyLike 自带）：**
 
@@ -86,7 +90,7 @@ npm ci
 npm start
 ```
 
-使用支持 SDK 58 的 Expo Go 调试。普通启动和 Actions 共用首页／导入／我的入口；`npm run start:m1` 为 8083 端口的启动别名。`npm run typecheck` 检查类型，`npm test` 运行测试。维护者可在 Actions 手动运行 **Build Android test APK**，在 Artifacts 获取独立测试包。 [Expo Go](https://expo.dev/go) · [构建工作流](https://github.com/KANGLLY/mylike-mobile-enhanced/actions)
+使用支持 SDK 58 的 Expo Go 调试。普通启动和 Actions 共用首页／导入／我的入口；`npm run start:m1` 为 8083 端口的启动别名。`npm run typecheck` 检查类型，`npm test` 运行测试。维护者可在 Actions 手动运行 **Build Android test APK** 或 **Build iPhone test IPA**，在 Artifacts 获取测试包。 [Expo Go](https://expo.dev/go) · [构建工作流](https://github.com/KANGLLY/mylike-mobile-enhanced/actions)
 
 ## 免责声明
 
